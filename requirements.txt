@@ -1,0 +1,6 @@
+geopandas
+shapely
+pandas
+python-dotenv
+sqlalchemy
+psycopg2
