@@ -1,5 +1,6 @@
 {
     "grid_file": "./inputs/grid.parquet",
     "input_file": "./inputs/input.parquet",
-    "output_path": "./outputs/"
+    "output_path": "./outputs/",
+    "num_processes": 4
 }

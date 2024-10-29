@@ -1,5 +1,5 @@
 import geopandas as gpd
-from shapely.geometry import LineString, MultiPolygon
+from shapely.geometry import LineString, MultiPolygon, MultiLineString
 from shapely.ops import split, linemerge
 import pandas as pd
 import logging
@@ -22,7 +22,7 @@ class Splitter:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logger.setLevel(logging.DEBUG)        
         # Configuração básica de saída para o console
-        file_handler = logging.FileHandler('splitter.log', mode = 'w')
+        file_handler = logging.FileHandler('splitter.log')
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         file_handler.setFormatter(formatter)
         
@@ -35,11 +35,11 @@ class Splitter:
     def load_data(self):
         # Carregar o arquivo grid e selecionar o polígono específico
         self.grid_gdf = gpd.read_parquet(self.grid_file)
-        self.logger.info(f'grid carregado com sucesso a partir de {grid_file}')
+        self.logger.info(f'grid carregado com sucesso a partir de {self.grid_file}')
 
         # Carregar o arquivo de entrada
         self.input_gdf = gpd.read_parquet(self.input_file)
-        self.logger.info(f'input carregado com sucesso a partir de {input_file}')
+        self.logger.info(f'input carregado com sucesso a partir de {self.input_file}')
 
     def intersection(self, n_grid):
         
@@ -66,7 +66,22 @@ class Splitter:
         lines = [linemerge(geom.boundary) for geom in self.gdf_input_intersection.geometry]
         lines_gdf=gpd.GeoDataFrame(geometry=lines)
         #Combinação de pontos em uma única linha
-        combined_points = [coord for line in list(lines_gdf.geometry) for coord in line.coords]
+        combined_points = []
+
+        for line in lines_gdf.geometry:
+            # Verifica se a geometria é LineString ou MultiLineString
+            if isinstance(line, LineString):
+                # Se for LineString, adiciona as coordenadas diretamente
+                combined_points.extend(list(line.coords))
+            elif isinstance(line, MultiLineString):
+                # Se for MultiLineString, extrai as coordenadas de cada LineString componente
+                for linestring in line.geoms:
+                    combined_points.extend(list(linestring.coords))
+            else:
+                # Lança um erro para tipos de geometria não suportados
+                raise TypeError(f"Tipo de geometria não suportado: {type(line)}")
+
+
         #Cria uma única geometria de Linestring forçada
         self.forced_line = LineString(combined_points)
         self.logger.info(f'Forced line criada com sucesso !')
@@ -85,7 +100,8 @@ class Splitter:
         geometries = list(self.broken_glass_polygon.geoms)
         self.gdf_broken_glass = gpd.GeoDataFrame(data={"id": range(1, len(geometries) + 1)}, 
                                                  geometry=geometries, crs="EPSG:4674")
-        self.logger.info(f"Glass shattering complete, levou {time.time() - operation_start} segundos para o clip do grid {self.n_grid}!")
+        elapsed_time = time.time() - operation_start
+        self.logger.info(f"Glass shattering complete, levou {elapsed_time:.2f} segundos para o clip do grid {self.n_grid}!")
 
     def calculate_overlapping(self):
         # Inicia o cronômetro para a operação
@@ -134,6 +150,7 @@ class Splitter:
         self.gdf_broken_glass.to_file(os.path.join(self.output_path, f'split_{self.n_grid}.geojson'), driver="GeoJSON")
         self.gdf_broken_glass.to_parquet(os.path.join(self.output_path, f'split_{self.n_grid}.parquet'))
         self.logger.info(f"Resultados salvos com sucesso da iteração do grid {self.n_grid}.")
+        return None
 
 
     def run(self, n_grid):
@@ -143,33 +160,34 @@ class Splitter:
         self.perform_split()
         self.calculate_overlapping()
         self.save_results()
+        return None
 
 
 
-# Uso da classe Splitter com logging
-if __name__ == "__main__":
-
-
-        #Ler arquivo config.json
-    with open('config.json', 'r') as file:
-        config=json.load(file)
-
-    # Acessando as variáveis carregadas
-    grid_file = config["grid_file"]
-    input_file = config["input_file"]
-    output_path = config["output_path"]
-
-
-
-    
-   
-    splitter = Splitter(grid_file, input_file, output_path)
-    splitter.load_data()
-    splitter.intersection(18)
-    splitter.prepare_split_line()
-    #splitter.perform_split()
-    #splitter.calculate_overlapping()
-    #splitter.save_results()
+## Uso da classe Splitter com logging
+#if __name__ == "__main__":
+#
+#
+#        #Ler arquivo config.json
+#    with open('config.json', 'r') as file:
+#        config=json.load(file)
+#
+#    # Acessando as variáveis carregadas
+#    grid_file = config["grid_file"]
+#    input_file = config["input_file"]
+#    output_path = config["output_path"]
+#
+#
+#    start_time = time.time()
+#
+#    n_grid = 18
+#    splitter = Splitter(grid_file, input_file, output_path)
+#    splitter.load_data()
+#    splitter.intersection(n_grid)
+#    splitter.prepare_split_line()
+#    splitter.perform_split()
+#    splitter.calculate_overlapping()
+#    splitter.save_results()
 
 
  
