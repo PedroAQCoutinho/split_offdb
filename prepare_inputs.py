@@ -1,67 +1,100 @@
 import geopandas as gpd
 import json
+import os
 from sqlalchemy import create_engine
+from dotenv import load_dotenv
+import time
 
-# Carregar configurações do config.json
-with open("config.json", "r") as f:
-    config = json.load(f)
-
-# Configurações do banco de dados
-db_user = config["db_user"]
-db_password = config["db_password"]
-db_host = config["db_host"]
-db_port = config["db_port"]
-db_name = config["db_name"]
-municipio = config["municipio"]
-grid_spacing = config["grid_spacing"]
-
-# Caminhos de saída
-output_parquet = config["output_parquet"]
-output_geojson = config["output_geojson"]
-grid_output_parquet = config["grid_output_parquet"]
-grid_output_geojson = config["grid_output_geojson"]
-
-# Criação do engine de conexão
-engine = create_engine(f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}")
-
-# Query para seleção de dados do município
-query = f"""
-SELECT c.ogc_fid AS id, 
-       'CAR' AS id_layer, 
-       c.geom  
-FROM car.car c 
-WHERE municipio = '{municipio}';
-"""
-
-# Executar a query e carregar os dados em um GeoDataFrame
-try:
-    gdf = gpd.read_postgis(query, engine, geom_col="geom")
-    print(query)
-    
-    # Verificar se o GeoDataFrame tem dados
-    if gdf.empty:
-        print("Nenhuma geometria encontrada para o município especificado.")
-    else:
-        # Definir o CRS explicitamente (EPSG:4674)
-        gdf.set_crs("EPSG:4674", inplace=True)
+class DataProcessor:
+    def __init__(self, config_path="config.json", grid_spacing=None):
+        # Carregar variáveis do .env para conexão com o banco
+        load_dotenv()
+        self.db_user = os.getenv("DB_USER")
+        self.db_password = os.getenv("DB_PASSWORD")
+        self.db_host = os.getenv("DB_HOST")
+        self.db_port = os.getenv("DB_PORT")
+        self.db_name = os.getenv("DB_NAME")
         
-        # Exportar o GeoDataFrame para Parquet
-        gdf.to_parquet(output_parquet)
-        print(f"Arquivo Parquet exportado com sucesso para {output_parquet}")
+        # Carregar configuração do arquivo JSON
+        with open(config_path, "r") as f:
+            config = json.load(f)
 
-        # Exportar o GeoDataFrame para GeoJSON
-        gdf.to_file(output_geojson, driver="GeoJSON")
-        print(f"Arquivo GeoJSON exportado com sucesso para {output_geojson}")
+        
+        self.municipios = config["municipio"]
 
-        # Query para criação do grid utilizando ST_SquareGrid com ST_Envelope
+        # Parâmetro opcional
+        if grid_spacing is None:
+            self.grid_spacing = config["grid_spacing"]
+        else:
+            self.grid_spacing = grid_spacing
+
+        print(f"Grid spacing: {self.grid_spacing}")
+        
+        self.output_parquet = config["input_file"]
+        self.grid_output_parquet = config["grid_file"]
+
+        # Criar o engine de conexão
+        self.engine = create_engine(f"postgresql://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}")
+
+    def load_municipio_data(self):
+ 
+        # Montar a query com base no parâmetro municipios
+        if self.municipios[0] == "all":
+            municipio_condition = ""  # Não aplica filtro, pegando todos os municípios
+        elif self.municipios[0] != "all":
+            municipios_formatted = "', '".join(self.municipios)
+            municipio_condition = f"WHERE municipio IN ('{municipios_formatted}')"
+        else:
+            raise ValueError("O parâmetro 'municipios' deve ser uma lista ou o valor 'all'.")
+
+
+        query = f"""
+        SELECT c.ogc_fid AS id, 
+               'CAR' AS id_layer, 
+               c.geom  
+        FROM car.car c 
+        {municipio_condition};
+        """
+        # Carregar os dados em um GeoDataFrame
+        try:
+            gdf = gpd.read_postgis(query, self.engine, geom_col="geom")
+            if gdf.empty:
+                print("Nenhuma geometria encontrada para os municípios especificados.")
+                return None
+            gdf.set_crs("EPSG:4674", inplace=True)
+            return gdf
+        except Exception as e:
+            print(f"Erro ao carregar dados dos municípios: {e}")
+            return None
+
+    def export_municipio_data(self, gdf):
+        # Exportar para Parquet e GeoJSON
+        gdf.to_parquet(self.output_parquet)
+        print(f"Arquivo Parquet exportado com sucesso para {self.output_parquet}")
+        
+        ##
+        gdf.to_file(self.output_parquet.replace(".parquet", ".geojson"), driver="GeoJSON")
+        
+
+
+    def create_grid(self):
+        # Montar a condição para a query do grid
+        if self.municipios[0] == "all":
+            municipio_condition = ""  # Não aplica filtro, pegando todos os municípios
+        elif self.municipios[0] != "all":
+            municipios_formatted = "', '".join(self.municipios)
+            municipio_condition = f"WHERE municipio IN ('{municipios_formatted}')"
+        else:
+            raise ValueError("O parâmetro 'municipios' deve ser uma lista ou o valor 'all'.")
+
         grid_query = f"""
         WITH resultado_municipio AS (
             SELECT geom, ogc_fid
             FROM car.car
-            WHERE municipio = '{municipio}'
+            {municipio_condition}
         ),
         grid AS (
-            SELECT (ST_SquareGrid({grid_spacing}, ST_Envelope(ST_Union(geom)))).geom AS geom
+            SELECT (ST_SquareGrid({self.grid_spacing}, ST_Envelope(ST_Union(geom)))).geom AS geom
             FROM resultado_municipio
         )
         SELECT row_number() OVER () AS grid_id,
@@ -69,24 +102,49 @@ try:
         FROM grid;
         """
         
-        # Executar a query para o grid e carregar o resultado em um GeoDataFrame
-        grid_gdf = gpd.read_postgis(grid_query, engine, geom_col="geom")
-        
-        if grid_gdf.empty:
-            print("Nenhuma célula de grid foi gerada. Verifique a extensão ou os dados do município.")
-        else:
-            # Definir o CRS explicitamente para o grid (EPSG:4674)
+        try:
+            grid_gdf = gpd.read_postgis(grid_query, self.engine, geom_col="geom")
+            if grid_gdf.empty:
+                print("Nenhuma célula de grid foi gerada. Verifique a extensão ou os dados dos municípios.")
+                return None
             grid_gdf.set_crs("EPSG:4674", inplace=True)
-            
-            # Exportar o grid para Parquet
-            grid_gdf.to_parquet(grid_output_parquet)
-            print(f"Grid Parquet exportado com sucesso para {grid_output_parquet}")
+            return grid_gdf
+        except Exception as e:
+            print(f"Erro ao criar o grid: {e}")
+            return None
 
-            # Exportar o grid para GeoJSON
-            grid_gdf.to_file(grid_output_geojson, driver="GeoJSON")
-            print(f"Grid GeoJSON exportado com sucesso para {grid_output_geojson}")
+    def export_grid_data(self, grid_gdf):
+        # Exportar grid para Parquet e GeoJSON
+        grid_gdf.to_parquet(self.grid_output_parquet)
+        print(f"Grid Parquet exportado com sucesso para {self.grid_output_parquet}")
 
-except ImportError as e:
-    print("Erro: pyarrow não está instalado. Instale-o usando 'pip install pyarrow' e tente novamente.")
-except Exception as e:
-    print(f"Ocorreu um erro: {e}")
+                ##
+        grid_gdf.to_file(self.grid_output_parquet.replace(".parquet", ".geojson"), driver="GeoJSON")
+        
+
+    def run(self):
+        # Executa o processo completo de exportação dos dados do município e do grid
+        municipio_gdf = self.load_municipio_data()
+        if municipio_gdf is not None:
+            self.export_municipio_data(municipio_gdf)
+        
+        grid_gdf = self.create_grid()
+        if grid_gdf is not None:
+            self.export_grid_data(grid_gdf)
+
+
+# # Executa o loop em paralelo
+# if __name__ == "__main__":
+
+#     # Define o tempo de início
+#     start_time = time.time()
+
+#     # Usa partial para fixar os primeiros três argumentos
+#     dataprocessor = DataProcessor(grid_spacing=0.25)
+#     dataprocessor.run()
+
+
+    
+#     # Calcula o tempo decorrido
+#     elapsed_time = time.time() - start_time
+#     print(f'Demorou {elapsed_time:.2f} segundos para rodar tudo')

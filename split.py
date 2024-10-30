@@ -1,28 +1,39 @@
 import geopandas as gpd
 from shapely.geometry import LineString, MultiPolygon, MultiLineString
-from shapely.ops import split, linemerge
+from shapely.ops import split, linemerge, polygonize
 import pandas as pd
 import logging
 import json
 import time
 import os
-
+import shapely as shp
 
 
 class Splitter:
 
-    def __init__(self, grid_file, input_file,  output_path):
-        self.grid_file = grid_file
-        self.input_file = input_file
-        self.output_path = output_path
+    def __init__(self, config_path="config.json"):
+
+                # Carregar configuração do arquivo JSON
+        with open(config_path, "r") as f:
+            config = json.load(f)
+
+        # Acessando as variáveis carregadas
+        self.grid_file = config["grid_file"]
+        self.input_file = config["input_file"]
+        self.output_path = config["output_path"]
+        self.num_processes = config["num_processes"]
+
+        # Cria vazios
         self.grid_gdf = None
         self.input_gdf = None
         self.start_time = time.time()
+        
         #Logger
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logger.setLevel(logging.DEBUG)        
+        
         # Configuração básica de saída para o console
-        file_handler = logging.FileHandler('splitter.log')
+        file_handler = logging.FileHandler('splitter.log', mode = 'w')
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         file_handler.setFormatter(formatter)
         
@@ -63,45 +74,79 @@ class Splitter:
     def prepare_split_line(self):       
 
         # Criar linhas a partir dos limites dessas geometrias e mesclá-las
-        lines = [linemerge(geom.boundary) for geom in self.gdf_input_intersection.geometry]
-        lines_gdf=gpd.GeoDataFrame(geometry=lines)
-        #Combinação de pontos em uma única linha
-        combined_points = []
+        lines = []
 
-        for line in lines_gdf.geometry:
-            # Verifica se a geometria é LineString ou MultiLineString
-            if isinstance(line, LineString):
-                # Se for LineString, adiciona as coordenadas diretamente
-                combined_points.extend(list(line.coords))
-            elif isinstance(line, MultiLineString):
-                # Se for MultiLineString, extrai as coordenadas de cada LineString componente
-                for linestring in line.geoms:
-                    combined_points.extend(list(linestring.coords))
-            else:
-                # Lança um erro para tipos de geometria não suportados
-                raise TypeError(f"Tipo de geometria não suportado: {type(line)}")
+        for geom in self.gdf_input_intersection.geometry:
+            merged_line = linemerge(geom.boundary)
+            
+            if isinstance(merged_line, MultiLineString):
+                
+                # Se for MultiLineString, combinar seus pontos em uma única LineString
+                points = []
+                for line in merged_line.geoms:
+                    points.extend(line.coords)  # Extrai coordenadas de cada LineString
+                
+                # Cria uma nova LineString com todos os pontos
+                merged_line = LineString(points)
+                
+            lines.append(merged_line)
+                
+        lines.append(self.unidade_split.boundary)
+          
+
+        # Cria o MultiLineString a partir das linhas
+        multi_line = MultiLineString(lines) 
+        
+        
+        # Usa shapely.node para adicionar nós (pontos de interseção) ao MultiLineString
+        self.multi_line_with_nodes = shp.node(multi_line)
+
+
+
+        
+        # lines_gdf=gpd.GeoDataFrame(geometry=lines)
+        # #Combinação de pontos em uma única linha
+        # combined_points = []
+
+        # for line in lines_gdf.geometry:
+        #     # Verifica se a geometria é LineString ou MultiLineString
+        #     if isinstance(line, LineString):
+        #         # Se for LineString, adiciona as coordenadas diretamente
+        #         combined_points.extend(list(line.coords))
+        #     elif isinstance(line, MultiLineString):
+        #         # Se for MultiLineString, extrai as coordenadas de cada LineString componente
+        #         for linestring in line.geoms:
+        #             combined_points.extend(list(linestring.coords))
+        #     else:
+        #         # Lança um erro para tipos de geometria não suportados
+        #         raise TypeError(f"Tipo de geometria não suportado: {type(line)}")
 
 
         #Cria uma única geometria de Linestring forçada
-        self.forced_line = LineString(combined_points)
-        self.logger.info(f'Forced line criada com sucesso !')
+        # self.forced_line = LineString(combined_points)
+        self.logger.info(f'Multi Line criada com sucesso !')
 
         return None
 
     def perform_split(self):
         
-        # Inicia o cronômetro para a operação
+        # Inicia o cronômetro para a operaçãorm ou  
         operation_start = time.time()
         
         # Dividir o polígono usando a linha forçada
-        broken_glass = split(self.unidade_split, self.forced_line)
-        self.broken_glass_polygon = MultiPolygon(broken_glass)
-        # Criar um GeoDataFrame com os fragmentos
-        geometries = list(self.broken_glass_polygon.geoms)
-        self.gdf_broken_glass = gpd.GeoDataFrame(data={"id": range(1, len(geometries) + 1)}, 
-                                                 geometry=geometries, crs="EPSG:4674")
+        broken_glass_polygon = list(polygonize(self.multi_line_with_nodes))
+        
+        # Filtra apenas os polígonos cujo representative_point intersecta unidade_split
+        filtered_polygons = [
+            poly for poly in broken_glass_polygon 
+            if poly.representative_point().intersects(self.unidade_split)
+        ]
+
+        self.gdf_broken_glass = gpd.GeoDataFrame(data={"id": range(1, len(filtered_polygons) + 1)}, 
+                                                 geometry=filtered_polygons, crs="EPSG:4674")
         elapsed_time = time.time() - operation_start
         self.logger.info(f"Glass shattering complete, levou {elapsed_time:.2f} segundos para o clip do grid {self.n_grid}!")
+
 
     def calculate_overlapping(self):
         # Inicia o cronômetro para a operação
@@ -164,26 +209,16 @@ class Splitter:
 
 
 
-## Uso da classe Splitter com logging
-#if __name__ == "__main__":
-#
-#
-#        #Ler arquivo config.json
-#    with open('config.json', 'r') as file:
-#        config=json.load(file)
-#
-#    # Acessando as variáveis carregadas
-#    grid_file = config["grid_file"]
-#    input_file = config["input_file"]
-#    output_path = config["output_path"]
-#
-#
+# # Uso da classe Splitter com logging
+# if __name__ == "__main__":
+
+
 #    start_time = time.time()
-#
-#    n_grid = 18
-#    splitter = Splitter(grid_file, input_file, output_path)
+
+ 
+#    splitter = Splitter()
 #    splitter.load_data()
-#    splitter.intersection(n_grid)
+#    splitter.intersection(1029)
 #    splitter.prepare_split_line()
 #    splitter.perform_split()
 #    splitter.calculate_overlapping()
