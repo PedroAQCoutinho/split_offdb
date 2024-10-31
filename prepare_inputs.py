@@ -4,9 +4,19 @@ import os
 from sqlalchemy import create_engine
 from dotenv import load_dotenv
 import time
+import logging
 
 class DataProcessor:
     def __init__(self, config_path="config.json", grid_spacing=None):
+        # Configuração do logger
+        logging.basicConfig(
+            filename='logs/prepare_inputs.log', 
+            level=logging.INFO, 
+            format='%(asctime)s - %(levelname)s - %(message)s'
+        )
+        self.logger = logging.getLogger(__name__)
+        self.logger.info("Inicializando DataProcessor")
+
         # Carregar variáveis do .env para conexão com o banco
         load_dotenv()
         self.db_user = os.getenv("DB_USER")
@@ -14,13 +24,15 @@ class DataProcessor:
         self.db_host = os.getenv("DB_HOST")
         self.db_port = os.getenv("DB_PORT")
         self.db_name = os.getenv("DB_NAME")
-        
+
         # Carregar configuração do arquivo JSON
         with open(config_path, "r") as f:
             config = json.load(f)
 
-        
+        self.skip_input_gen = config["skip_input_gen"]
+        self.skip_grid_gen = config.get("skip_grid_gen", False)  # Garantir existência
         self.municipios = config["municipio"]
+        self.uf = config["uf"]
 
         # Parâmetro opcional
         if grid_spacing is None:
@@ -28,16 +40,17 @@ class DataProcessor:
         else:
             self.grid_spacing = grid_spacing
 
-        print(f"Grid spacing: {self.grid_spacing}")
-        
+        self.logger.info(f"Configuração carregada com espaçamento de grid: {self.grid_spacing}")
+
         self.output_parquet = config["input_file"]
         self.grid_output_parquet = config["grid_file"]
 
         # Criar o engine de conexão
-        self.engine = create_engine(f"postgresql://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}")
+        self.engine = create_engine(
+            f"postgresql://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
+        )
 
     def load_municipio_data(self):
- 
         # Montar a query com base no parâmetro municipios
         if self.municipios[0] == "all":
             municipio_condition = ""  # Não aplica filtro, pegando todos os municípios
@@ -47,104 +60,123 @@ class DataProcessor:
         else:
             raise ValueError("O parâmetro 'municipios' deve ser uma lista ou o valor 'all'.")
 
-
         query = f"""
         SELECT c.ogc_fid AS id, 
                'CAR' AS id_layer, 
-               c.geom  
-        FROM car.car c 
-        {municipio_condition};
+               ST_CollectionExtract(c.geom,3) geom 
+        FROM car.car_mv c {municipio_condition};
         """
+
         # Carregar os dados em um GeoDataFrame
         try:
             gdf = gpd.read_postgis(query, self.engine, geom_col="geom")
             if gdf.empty:
-                print("Nenhuma geometria encontrada para os municípios especificados.")
+                self.logger.warning("Nenhuma geometria encontrada para os municípios especificados.")
                 return None
             gdf.set_crs("EPSG:4674", inplace=True)
+            self.logger.info("Dados dos municípios carregados com sucesso.")
             return gdf
         except Exception as e:
-            print(f"Erro ao carregar dados dos municípios: {e}")
-            return None
+            self.logger.error(f"Erro ao carregar dados dos municípios: {e}")
+            raise ValueError("É necessária a geometria para prosseguir")
 
     def export_municipio_data(self, gdf):
-        # Exportar para Parquet e GeoJSON
-        gdf.to_parquet(self.output_parquet)
-        print(f"Arquivo Parquet exportado com sucesso para {self.output_parquet}")
-        
-        ##
-        gdf.to_file(self.output_parquet.replace(".parquet", ".geojson"), driver="GeoJSON")
-        
-
+        try:
+            gdf.to_parquet(self.output_parquet)
+            self.logger.info(f"Arquivo Parquet exportado com sucesso para {self.output_parquet}")
+            gdf.to_file(self.output_parquet.replace(".parquet", ".gpkg"), layer='input', driver="GPKG")
+        except Exception as e:
+            self.logger.error(f"Erro ao exportar dados dos municípios: {e}")
 
     def create_grid(self):
-        # Montar a condição para a query do grid
+        # Define a condição de filtro para os municípios
         if self.municipios[0] == "all":
-            municipio_condition = ""  # Não aplica filtro, pegando todos os municípios
+            municipio_condition = ""
         elif self.municipios[0] != "all":
             municipios_formatted = "', '".join(self.municipios)
             municipio_condition = f"WHERE municipio IN ('{municipios_formatted}')"
         else:
             raise ValueError("O parâmetro 'municipios' deve ser uma lista ou o valor 'all'.")
 
+        # Condicional para definir a área de envelope
+        if self.uf is None:
+            bbox_source = "ST_Envelope(ST_Union(geom))"
+            from_clause = "FROM resultado_municipio"
+        elif self.uf[0] == "all":
+            bbox_source = "ST_Envelope(geom)"
+            from_clause = "FROM ibge.pa_br_pais_ibge_2022"
+        else:
+            bbox_source = "ST_Envelope(geom)"
+            from_clause = f"FROM ibge.pa_br_uf_ibge_2022 WHERE sigla_uf = '{self.uf[0]}'"
+
         grid_query = f"""
         WITH resultado_municipio AS (
-            SELECT geom, ogc_fid
-            FROM car.car
-            {municipio_condition}
+            SELECT geom FROM car.car_mv {municipio_condition}
+        ),
+        envelope AS (
+            SELECT {bbox_source} AS bbox {from_clause}
         ),
         grid AS (
-            SELECT (ST_SquareGrid({self.grid_spacing}, ST_Envelope(ST_Union(geom)))).geom AS geom
-            FROM resultado_municipio
+            SELECT (ST_SquareGrid({self.grid_spacing}, bbox)).geom AS geom
+            FROM envelope
         )
-        SELECT row_number() OVER () AS grid_id,
-            geom
-        FROM grid;
+        SELECT row_number() OVER () AS grid_id, geom FROM grid;
         """
-        
+
         try:
             grid_gdf = gpd.read_postgis(grid_query, self.engine, geom_col="geom")
             if grid_gdf.empty:
-                print("Nenhuma célula de grid foi gerada. Verifique a extensão ou os dados dos municípios.")
+                self.logger.warning("Nenhuma célula de grid foi gerada.")
                 return None
             grid_gdf.set_crs("EPSG:4674", inplace=True)
+            self.logger.info("Grid criado com sucesso.")
             return grid_gdf
         except Exception as e:
-            print(f"Erro ao criar o grid: {e}")
+            self.logger.error(f"Erro ao criar o grid: {e}")
             return None
 
     def export_grid_data(self, grid_gdf):
-        # Exportar grid para Parquet e GeoJSON
-        grid_gdf.to_parquet(self.grid_output_parquet)
-        print(f"Grid Parquet exportado com sucesso para {self.grid_output_parquet}")
-
-                ##
-        grid_gdf.to_file(self.grid_output_parquet.replace(".parquet", ".geojson"), driver="GeoJSON")
-        
+        try:
+            grid_gdf.to_parquet(self.grid_output_parquet)
+            self.logger.info(f"Grid Parquet exportado com sucesso para {self.grid_output_parquet}")
+            grid_gdf.to_file(self.grid_output_parquet.replace(".parquet", ".gpkg"), layer='grid', driver="GPKG")
+        except Exception as e:
+            self.logger.error(f"Erro ao exportar dados do grid: {e}")
 
     def run(self):
-        # Executa o processo completo de exportação dos dados do município e do grid
-        municipio_gdf = self.load_municipio_data()
-        if municipio_gdf is not None:
-            self.export_municipio_data(municipio_gdf)
         
-        grid_gdf = self.create_grid()
-        if grid_gdf is not None:
-            self.export_grid_data(grid_gdf)
+        self.logger.info("Iniciando processamento de dados...")
+        if not self.skip_input_gen:
+            municipio_gdf = self.load_municipio_data()
+            if municipio_gdf is not None:
+                self.export_municipio_data(municipio_gdf)
+        else:
+            self.logger.info(f"A flag skip_input_gen foi setada para True, skipping geração de input")
+
+        if not self.skip_grid_gen:
+            grid_gdf = self.create_grid()
+            if grid_gdf is not None:
+                self.export_grid_data(grid_gdf)
+
+        else:
+            self.logger.info(f"A flag skip_input_gen foi setada para True, skipping geração de grid")
+
+        self.logger.info("Processamento concluído.")
 
 
-# # Executa o loop em paralelo
-# if __name__ == "__main__":
 
-#     # Define o tempo de início
-#     start_time = time.time()
+# Executa o loop em paralelo
+if __name__ == "__main__":
 
-#     # Usa partial para fixar os primeiros três argumentos
-#     dataprocessor = DataProcessor(grid_spacing=0.25)
-#     dataprocessor.run()
+    # Define o tempo de início
+    start_time = time.time()
+
+    # Usa partial para fixar os primeiros três argumentos
+    dataprocessor = DataProcessor(grid_spacing=0.5)
+    dataprocessor.run()
 
 
     
-#     # Calcula o tempo decorrido
-#     elapsed_time = time.time() - start_time
-#     print(f'Demorou {elapsed_time:.2f} segundos para rodar tudo')
+    # Calcula o tempo decorrido
+    elapsed_time = time.time() - start_time
+    print(f'Demorou {elapsed_time:.2f} segundos para rodar tudo')

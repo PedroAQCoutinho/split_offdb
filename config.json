@@ -3,14 +3,11 @@
     "input_file": "./inputs/input.parquet",
     "output_path": "./outputs/",
     "num_processes": 4,
-    "municipio":[
-        "Babaçulândia", "Barra do Ouro", "Bom Jesus do Tocantins", "Campos Lindos", "Centenário",
-        "Filadélfia", "Goiatins", "Itacajá", "Lizarda", "Pedro Afonso", "Recursolândia", "Rio Sono",
-        "Santa Maria do Tocantins", "Alto Parnaíba", "Balsas", "Carolina", "Feira Nova do Maranhão",
-        "Fortaleza dos Nogueiras", "Loreto", "Nova Colinas", "Riachão", "Sambaíba", "Tasso Fragoso",
-        "São Raimundo das Mangabeiras", "Baixa Grande do Ribeiro", "Barreiras do Piauí", "Bom Jesus",
-        "Gilbués", "Monte Alegre do Piauí", "Ribeiro Gonçalves", "Santa Filomena"
-    ],
-    "grid_spacing": 0.1
+    "municipio":["all"],
+    "uf":["all"],
+    "grid_spacing": 0.5,
+    "skip_input_gen":false,
+    "skip_grid_gen":false,
+    "skip_prepare_inputs":true
 
 }

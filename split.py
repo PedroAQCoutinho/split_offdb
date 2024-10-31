@@ -33,7 +33,7 @@ class Splitter:
         self.logger.setLevel(logging.DEBUG)        
         
         # Configuração básica de saída para o console
-        file_handler = logging.FileHandler('splitter.log', mode = 'w')
+        file_handler = logging.FileHandler('logs/splitter.log', mode = 'w')
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         file_handler.setFormatter(formatter)
         
@@ -53,7 +53,7 @@ class Splitter:
         self.logger.info(f'input carregado com sucesso a partir de {self.input_file}')
 
     def intersection(self, n_grid):
-        
+            
         self.n_grid = n_grid
 
         # Verificar se grid_gdf e input_gdf estão carregados
@@ -64,12 +64,23 @@ class Splitter:
         if self.grid_gdf.empty or self.input_gdf.empty:
             self.logger.error("grid_gdf ou input_gdf estão vazios.")
             raise ValueError("grid_gdf e input_gdf não podem estar vazios.")
+
+        # Seleciona a unidade específica no grid e aplica índice espacial para otimizar a interseção
+        self.unidade_split = self.grid_gdf[self.grid_gdf["grid_id"] == self.n_grid].geometry.values[0]
         
-        self.unidade_split = self.grid_gdf[self.grid_gdf["grid_id"] == self.n_grid].geometry.values[0] 
-        self.gdf_input_intersection = self.input_gdf[self.input_gdf.intersects(self.unidade_split)]
-        self.logger.info(f'Seleção dos poligonos para split realizada com sucesso, total de {len(self.gdf_input_intersection)} polígonos')
+        # Cria um índice espacial para `input_gdf`
+        input_sindex = self.input_gdf.sindex
+
+        # Filtra apenas as geometrias que têm bbox sobrepondo `unidade_split`
+        possible_matches_index = list(input_sindex.intersection(self.unidade_split.bounds))
+        possible_matches = self.input_gdf.iloc[possible_matches_index]
+
+        # Filtra apenas as interseções reais
+        self.gdf_input_intersection = possible_matches[possible_matches.intersects(self.unidade_split)]
         
-    
+        self.logger.info(f'Seleção dos polígonos para split realizada com sucesso, total de {len(self.gdf_input_intersection)} polígonos')
+
+        
     
     def prepare_split_line(self):       
 
@@ -96,7 +107,7 @@ class Splitter:
 
         # Cria o MultiLineString a partir das linhas
         multi_line = MultiLineString(lines) 
-        
+        multi_line = multi_line.simplify(tolerance=0.0001, preserve_topology=True)
         
         # Usa shapely.node para adicionar nós (pontos de interseção) ao MultiLineString
         self.multi_line_with_nodes = shp.node(multi_line)
@@ -192,7 +203,7 @@ class Splitter:
 
     def save_results(self):
         # Salvar resultados em GeoJSON e Parquet
-        self.gdf_broken_glass.to_file(os.path.join(self.output_path, f'split_{self.n_grid}.geojson'), driver="GeoJSON")
+        #self.gdf_broken_glass.to_file(os.path.join(self.output_path, f'split_{self.n_grid}.geojson'), driver="GeoJSON")
         self.gdf_broken_glass.to_parquet(os.path.join(self.output_path, f'split_{self.n_grid}.parquet'))
         self.logger.info(f"Resultados salvos com sucesso da iteração do grid {self.n_grid}.")
         return None
@@ -210,6 +221,7 @@ class Splitter:
 
 
 # # Uso da classe Splitter com logging
+
 # if __name__ == "__main__":
 
 
@@ -218,7 +230,7 @@ class Splitter:
  
 #    splitter = Splitter()
 #    splitter.load_data()
-#    splitter.intersection(1029)
+#    splitter.intersection(187)
 #    splitter.prepare_split_line()
 #    splitter.perform_split()
 #    splitter.calculate_overlapping()

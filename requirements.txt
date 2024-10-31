@@ -4,3 +4,8 @@ pandas
 python-dotenv
 sqlalchemy
 psycopg2
+multiprocessing
+functools
+matplotlib
+numpy
+subprocess
