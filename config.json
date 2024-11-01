@@ -2,7 +2,7 @@
     "grid_file": "./inputs/grid.parquet",
     "input_file": "./inputs/input.parquet",
     "output_path": "./outputs/",
-    "num_processes": 2,
+    "num_processes": 20,
     "municipio":["all"],
     "uf":["all"],
     "grid_spacing": 0.5,
