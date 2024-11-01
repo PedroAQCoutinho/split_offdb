@@ -12,6 +12,7 @@ class DataProcessor:
         logging.basicConfig(
             filename='logs/prepare_inputs.log', 
             level=logging.INFO, 
+            filemode = 'w',
             format='%(asctime)s - %(levelname)s - %(message)s'
         )
         self.logger = logging.getLogger(__name__)
