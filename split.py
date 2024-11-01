@@ -172,7 +172,7 @@ class Splitter:
         
         for index, shard in self.gdf_broken_glass.iterrows():
             glass_shard_point = shard["representative_point"]
-            overlapping_polygons = self.input_gdf[self.input_gdf.contains(glass_shard_point)]
+            overlapping_polygons = self.gdf_input_intersection[self.gdf_input_intersection.contains(glass_shard_point)]
             
             # Define id_layers e id_features para cada caso
             if not overlapping_polygons.empty:

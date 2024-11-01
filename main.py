@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import subprocess
 
+
 # Configuração do logger para main.log
 logging.basicConfig(
     filename='logs/main.log',

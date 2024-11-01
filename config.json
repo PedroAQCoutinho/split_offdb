@@ -3,11 +3,11 @@
     "input_file": "./inputs/input.parquet",
     "output_path": "./outputs/",
     "num_processes": 20,
-    "municipio":["all"],
-    "uf":["all"],
+    "grid_from_clause":"from ibge.pa_br_municipios_ibge_2022 c where c.nm_mun  = 'Balsas'",
+    "input_from_clause":"from car.car_mv c where c.municipio = 'Balsas'",
     "grid_spacing": 0.5,
     "skip_input_gen":false,
     "skip_grid_gen":false,
-    "skip_prepare_inputs":true
+    "skip_prepare_inputs":false
 
 }

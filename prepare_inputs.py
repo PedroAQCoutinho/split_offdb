@@ -32,8 +32,8 @@ class DataProcessor:
 
         self.skip_input_gen = config["skip_input_gen"]
         self.skip_grid_gen = config.get("skip_grid_gen", False)  # Garantir existência
-        self.municipios = config["municipio"]
-        self.uf = config["uf"]
+        self.input_from_clause = config["input_from_clause"]
+        self.grid_from_clause = config["grid_from_clause"]
 
         # Parâmetro opcional
         if grid_spacing is None:
@@ -53,21 +53,13 @@ class DataProcessor:
 
     def load_municipio_data(self):
         # Montar a query com base no parâmetro municipios
-        if self.municipios[0] == "all":
-            municipio_condition = ""  # Não aplica filtro, pegando todos os municípios
-        elif self.municipios[0] != "all":
-            municipios_formatted = "', '".join(self.municipios)
-            municipio_condition = f"WHERE municipio IN ('{municipios_formatted}')"
-        else:
-            raise ValueError("O parâmetro 'municipios' deve ser uma lista ou o valor 'all'.")
-
         query = f"""
         SELECT c.ogc_fid AS id, 
                'CAR' AS id_layer, 
                ST_CollectionExtract(c.geom,3) geom 
-        FROM car.car_mv c {municipio_condition};
+        {self.input_from_clause};
         """
-
+        print(query)
         # Carregar os dados em um GeoDataFrame
         try:
             gdf = gpd.read_postgis(query, self.engine, geom_col="geom")
@@ -92,32 +84,14 @@ class DataProcessor:
             self.logger.error(f"Erro ao exportar dados dos municípios: {e}")
 
     def create_grid(self):
-        # Define a condição de filtro para os municípios
-        if self.municipios[0] == "all":
-            municipio_condition = ""
-        elif self.municipios[0] != "all":
-            municipios_formatted = "', '".join(self.municipios)
-            municipio_condition = f"WHERE municipio IN ('{municipios_formatted}')"
-        else:
-            raise ValueError("O parâmetro 'municipios' deve ser uma lista ou o valor 'all'.")
-
-        # Condicional para definir a área de envelope
-        if self.uf is None:
-            bbox_source = "ST_Envelope(ST_Union(geom))"
-            from_clause = "FROM resultado_municipio"
-        elif self.uf[0] == "all":
-            bbox_source = "ST_Envelope(geom)"
-            from_clause = "FROM ibge.pa_br_pais_ibge_2022"
-        else:
-            bbox_source = "ST_Envelope(geom)"
-            from_clause = f"FROM ibge.pa_br_uf_ibge_2022 WHERE sigla_uf = '{self.uf[0]}'"
-
+        
+        # Construir a query de grid usando as cláusulas do config.json
         grid_query = f"""
         WITH resultado_municipio AS (
-            SELECT geom FROM car.car_mv {municipio_condition}
+            SELECT geom {self.input_from_clause}
         ),
         envelope AS (
-            SELECT {bbox_source} AS bbox {from_clause}
+            SELECT geom AS bbox {self.grid_from_clause}
         ),
         grid AS (
             SELECT (ST_SquareGrid({self.grid_spacing}, bbox)).geom AS geom
@@ -125,7 +99,8 @@ class DataProcessor:
         )
         SELECT row_number() OVER () AS grid_id, geom FROM grid;
         """
-
+        
+        print(grid_query)  # Apenas para debug
         try:
             grid_gdf = gpd.read_postgis(grid_query, self.engine, geom_col="geom")
             if grid_gdf.empty:
