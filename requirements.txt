@@ -7,4 +7,5 @@ wheel
 psycopg2
 matplotlib
 numpy
+pyarrow
 
