@@ -7,7 +7,7 @@ import time
 import logging
 
 class DataProcessor:
-    def __init__(self, config_path="config.json", grid_spacing=None):
+    def __init__(self, config_path="config.json", grid_spacing=0.5):
         # Configuração do logger
         logging.basicConfig(
             filename='logs/prepare_inputs.log', 
@@ -59,7 +59,7 @@ class DataProcessor:
                ST_CollectionExtract(c.geom,3) geom 
         {self.input_from_clause};
         """
-        print(query)
+        #print(query)
         # Carregar os dados em um GeoDataFrame
         try:
             gdf = gpd.read_postgis(query, self.engine, geom_col="geom")
@@ -100,7 +100,7 @@ class DataProcessor:
         SELECT row_number() OVER () AS grid_id, geom FROM grid;
         """
         
-        print(grid_query)  # Apenas para debug
+        #print(grid_query)  # Apenas para debug
         try:
             grid_gdf = gpd.read_postgis(grid_query, self.engine, geom_col="geom")
             if grid_gdf.empty:
@@ -145,18 +145,18 @@ class DataProcessor:
 
 
 
-# Executa o loop em paralelo
-if __name__ == "__main__":
+# # Executa o loop em paralelo
+# if __name__ == "__main__":
 
-    # Define o tempo de início
-    start_time = time.time()
+#     # Define o tempo de início
+#     start_time = time.time()
 
-    # Usa partial para fixar os primeiros três argumentos
-    dataprocessor = DataProcessor(grid_spacing=0.5)
-    dataprocessor.run()
+#     # Usa partial para fixar os primeiros três argumentos
+#     dataprocessor = DataProcessor(grid_spacing=0.5)
+#     dataprocessor.run()
 
 
     
-    # Calcula o tempo decorrido
-    elapsed_time = time.time() - start_time
-    print(f'Demorou {elapsed_time:.2f} segundos para rodar tudo')
+#     # Calcula o tempo decorrido
+#     elapsed_time = time.time() - start_time
+#     print(f'Demorou {elapsed_time:.2f} segundos para rodar tudo')

@@ -9,6 +9,13 @@ import os
 import shapely as shp
 
 
+
+def load_input(input_file):
+    # Carregar o arquivo de entrada
+    input_gdf = gpd.read_parquet(input_file)    
+    print('Input carregado com sucesso !')
+    return input_gdf
+
 class Splitter:
 
     def __init__(self, config_path="config.json"):
@@ -48,20 +55,19 @@ class Splitter:
         self.grid_gdf = gpd.read_parquet(self.grid_file)
         self.logger.info(f'grid carregado com sucesso a partir de {self.grid_file}')
 
-        # Carregar o arquivo de entrada
-        self.input_gdf = gpd.read_parquet(self.input_file)
-        self.logger.info(f'input carregado com sucesso a partir de {self.input_file}')
+        #Só retorna esse para que
+        return None
 
-    def intersection(self, n_grid):
+    def intersection(self, n_grid, data):
             
         self.n_grid = n_grid
 
         # Verificar se grid_gdf e input_gdf estão carregados
-        if self.grid_gdf is None or self.input_gdf is None:
+        if self.grid_gdf is None or data is None:
             self.logger.error("grid_gdf ou input_gdf não estão carregados.")
             raise ValueError("grid_gdf e input_gdf devem estar carregados antes de chamar intersection.")
         
-        if self.grid_gdf.empty or self.input_gdf.empty:
+        if self.grid_gdf.empty or data.empty:
             self.logger.error("grid_gdf ou input_gdf estão vazios.")
             raise ValueError("grid_gdf e input_gdf não podem estar vazios.")
 
@@ -69,15 +75,15 @@ class Splitter:
         self.unidade_split = self.grid_gdf[self.grid_gdf["grid_id"] == self.n_grid].geometry.values[0]
         
         # Cria um índice espacial para `input_gdf`
-        input_sindex = self.input_gdf.sindex
+        input_sindex = data.sindex
 
         # Filtra apenas as geometrias que têm bbox sobrepondo `unidade_split`
         possible_matches_index = list(input_sindex.intersection(self.unidade_split.bounds))
-        possible_matches = self.input_gdf.iloc[possible_matches_index]
+        possible_matches = data.iloc[possible_matches_index]
 
         # Filtra apenas as interseções reais
         self.gdf_input_intersection = possible_matches[possible_matches.intersects(self.unidade_split)]
-        
+
         self.logger.info(f'Seleção dos polígonos para split realizada com sucesso, total de {len(self.gdf_input_intersection)} polígonos')
 
         
@@ -176,10 +182,10 @@ class Splitter:
             
             # Define id_layers e id_features para cada caso
             if not overlapping_polygons.empty:
-                id_layers = ['void'] + overlapping_polygons["id_layer"].tolist()
+                id_layers = ['GRID'] + overlapping_polygons["id_layer"].tolist()
                 id_features = [self.n_grid] + overlapping_polygons["id"].tolist()
             else:
-                id_layers = ['void']
+                id_layers = ['GRID']
                 id_features = [self.n_grid]
             
             # Armazena as listas para cada fragmento
@@ -209,9 +215,9 @@ class Splitter:
         return None
 
 
-    def run(self, n_grid):
+    def run(self, n_grid, data):
         self.load_data()
-        self.intersection(n_grid)
+        self.intersection(n_grid, data)
         self.prepare_split_line()
         self.perform_split()
         self.calculate_overlapping()

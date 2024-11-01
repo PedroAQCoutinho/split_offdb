@@ -1,6 +1,6 @@
 import logging
 from multiprocessing import Pool
-from split import Splitter
+from split import Splitter, load_input
 import time
 import json
 from prepare_inputs import DataProcessor
@@ -17,14 +17,25 @@ import subprocess
 logging.basicConfig(
     filename='logs/main.log',
     level=logging.INFO,
+    filemode = 'w',
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
+
+#Cria diretórios necessários
+os.makedirs('inputs', exist_ok=True)
+os.makedirs('outputs', exist_ok=True)
+os.makedirs('logs', exist_ok=True)
+os.makedirs('finais', exist_ok=True)
+
+
+
+
 # Função para instanciar e executar o Splitter para um grid específico
-def run_splitter(grid_id, config):
+def run_splitter(grid_id, data, config):
     splitter = Splitter(config)
-    splitter.run(grid_id)
+    splitter.run(grid_id, data)
 
 def merge_parquet_files(folder_path, output_file="merged_output"):
     start_merge = time.time()
@@ -37,12 +48,9 @@ def merge_parquet_files(folder_path, output_file="merged_output"):
     # Concatena todos os GeoDataFrames em um só, como um empilhamento direto (rbind)
     merged_gdf = gpd.GeoDataFrame(pd.concat(gdfs, ignore_index=True), crs=gdfs[0].crs)
     
-    # Salva o GeoDataFrame concatenado em um novo arquivo GeoJSON e Parquet
-    output_folder = './finais'
-    os.makedirs(output_folder, exist_ok=True)
-    
-    merged_gdf.to_file(os.path.join(output_folder, f'{output_file}.geojson'), driver="GeoJSON")
-    merged_gdf.to_parquet(os.path.join(output_folder, f'{output_file}.parquet'))
+    #Export    
+    merged_gdf.to_file(os.path.join('./finais', f'{output_file}.gpkg'), driver="gpkg")
+    merged_gdf.to_parquet(os.path.join('./finais', f'{output_file}.parquet'))
     logger.info(f"Arquivo concatenado salvo como {output_file}")
 
     # Usa subprocess para excluir arquivos na pasta .outputs
@@ -54,57 +62,52 @@ def merge_parquet_files(folder_path, output_file="merged_output"):
 # Executa o loop de grid spacing e mede o tempo
 if __name__ == "__main__":
 
-    start_geral = time.time()
+    start_time = time.time()
     logger.info("Iniciando processamento geral")
 
     # Carrega a configuração
     with open("config.json", "r") as f:
         config = json.load(f)
 
-    # Lista para armazenar resultados de tempo para cada grid_spacing
-    results = []
-    grid_spacing = config["grid_spacing"]
-    skip_prepare_inputs = grid_spacing = config["skip_prepare_inputs"]
-
-    # Tempo de início para o grid_spacing atual
-    start_time = time.time()
+    # Skip prepare ?
+    skip_prepare_inputs = config["skip_prepare_inputs"]
 
     if not skip_prepare_inputs:
         # Executa o DataProcessor com o grid_spacing atual
-        dataprocessor = DataProcessor(grid_spacing=grid_spacing)
+        dataprocessor = DataProcessor() #usar grid spacing default
         dataprocessor.run()
     else:
         print('Skipping prepare_inputs.py')
 
+    #Carregar input
+    data = load_input(config["input_file"])
+
     # Usar functools.partial para passar `config` como parâmetro fixo para `run_splitter`
-    run_splitter_partial = partial(run_splitter, config="config.json")
+    run_splitter_partial = partial(run_splitter, data=data, config="config.json")
 
     # Carrega os IDs dos grids
-    gdf = gpd.read_file("inputs/grid.gpkg")
+    gdf = gpd.read_parquet(config["grid_file"])
     grids = gdf["grid_id"].tolist()
 
     # Executa o multiprocessing com a lista de grids
     logger.info("Iniciando multiprocessing para grids")
+    #Paralelismo baseado em multiprocessing
     with Pool(processes=config['num_processes']) as pool:
         pool.map(run_splitter_partial, grids)
 
     # Calcula o tempo decorrido para o grid_spacing atual
     elapsed_time = time.time() - start_time
-    logger.info(f"Tempo de processamento para grid_spacing={grid_spacing}: {elapsed_time:.2f} segundos")
+    logger.info(f"Tempo de processamento: {elapsed_time:.2f} segundos")
 
-    # Adiciona os resultados à lista
-    results.append({"grid_spacing": grid_spacing, "elapsed_time": elapsed_time})
+
 
     # Limpeza e concatenação dos arquivos após cada iteração
-    merge_parquet_files(folder_path=config['output_path'], output_file=f"split_gridspacing_{grid_spacing}")
+    merge_parquet_files(folder_path=config['output_path'], output_file=config["arquivos_final"])
 
     # Tempo total de processamento
-    elapsed_total = time.time() - start_geral
+    elapsed_total = time.time() - start_time
     logger.info(f"Tempo total de processamento: {elapsed_total:.2f} segundos")
 
-    # Converte os resultados em um DataFrame
-    df_results = pd.DataFrame(results)
-    # Salva o DataFrame com os resultados em CSV para referência futura
-    df_results.to_csv("tempo_grid_spacing.csv", index=False)
+
 
 
