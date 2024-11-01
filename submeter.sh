@@ -1,9 +1,12 @@
 #!/bin/bash
 
-#PBS -N exemplo
+#PBS -N CAR_split
 #PBS -l select=1:ncpus=40
 #PBS -l walltime=96:00:00
 #PBS -q atlas
+#PBS -oe
+#PBS -m abe
+#PBS -M paq.coutinho@gmail.com
 
 # Carrega o módulo de uma versão mais recente do Python
 module load gcc python/3.9.17 # Certifique-se de que essa versão está disponível no sistema
