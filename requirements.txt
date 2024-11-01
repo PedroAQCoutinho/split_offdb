@@ -3,9 +3,8 @@ shapely
 pandas
 python-dotenv
 sqlalchemy
+wheel
 psycopg2
-multiprocessing
-functools
 matplotlib
 numpy
-subprocess
+

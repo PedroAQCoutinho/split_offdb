@@ -4,7 +4,7 @@
     "output_path": "./outputs/",
     "num_processes": 4,
     "municipio":["all"],
-    "uf":["all"],
+    "uf":["MA"],
     "grid_spacing": 0.5,
     "skip_input_gen":false,
     "skip_grid_gen":false,

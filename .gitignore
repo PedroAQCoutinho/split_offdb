@@ -6,4 +6,7 @@ inputs/
 outputs/
 temp/
 test/
+logs/
 finais/
+log
+nohup.out
