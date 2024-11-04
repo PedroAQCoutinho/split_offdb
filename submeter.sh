@@ -20,6 +20,6 @@ export PYTHONPATH=/mnt/nfs/home/pquilici/.local/lib/python3.9/site-packages:$PYT
 cd /home/pquilici/gitworkspace/split_offdb
 
 # Executa o script Python e redireciona a saída para um arquivo
-python3 main.py > script.log 2>&1
+python3 main.py > logs/script.log 2>&1
 
 
