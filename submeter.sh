@@ -10,7 +10,8 @@
 #PBS -M paq.coutinho@gmail.com
 
 # Carrega o módulo de uma versão mais recente do Python e MPI
-module load gcc python/3.9.17 openmpi # Certifique-se de que o OpenMPI está disponível no sistema
+module load gcc/6.4.0 python/3.9.17 
+module load mpich/3.3.2 # Certifique-se de que o OpenMPI está disponível no sistema
 
 # Define o PYTHONPATH para incluir o diretório de instalação local do pandas
 export PYTHONPATH=/mnt/nfs/home/pquilici/.local/lib/python3.9/site-packages:$PYTHONPATH
