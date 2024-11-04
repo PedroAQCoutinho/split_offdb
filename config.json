@@ -3,12 +3,12 @@
     "input_file": "./inputs/input.parquet",
     "arquivos_final":"split_balsas",
     "output_path": "./outputs/",
-    "num_processes": 12,
-    "grid_from_clause":"from ibge.pa_br_municipios_ibge_2022 a where a.nm_mun  = 'Balsas'",
-    "input_from_clause":"from car.car_mv c where c.municipio  = 'Balsas'",
+    "num_processes": 8,
+    "grid_from_clause":"from ibge.pa_br_uf_ibge_2022 a where a.sigla_uf  = 'MA'",
+    "input_from_clause":"from car.car_mv c where c.uf = 'MA'",
     "grid_spacing": 0.5,
     "skip_input_gen":false,
     "skip_grid_gen":false,
-    "skip_prepare_inputs":false
+    "skip_prepare_inputs":true
 
 }

@@ -56,29 +56,22 @@ class Splitter:
 
         self.logger.debug(f"Splitter initialized with grid_path: {self.grid_file} AND input_path: {self.input_file}")
 
-    def load_data(self):
-        # Carregar o arquivo grid e selecionar o polígono específico
-        self.grid_gdf = gpd.read_parquet(self.grid_file)
-        #self.logger.info(f'grid carregado com sucesso a partir de {self.grid_file}')
 
-        #Só retorna esse para que
-        return None
-
-    def intersection(self, n_grid, data):
+    def intersection(self, n_grid, data, grid_gdf):
             
         self.n_grid = n_grid
 
         # Verificar se grid_gdf e input_gdf estão carregados
-        if self.grid_gdf is None or data is None:
+        if grid_gdf is None or data is None:
             self.logger.error("grid_gdf ou input_gdf nao estao carregados.")
             raise ValueError("grid_gdf e input_gdf devem estar carregados antes de chamar intersection.")
         
-        if self.grid_gdf.empty or data.empty:
+        if grid_gdf.empty or data.empty:
             self.logger.error("grid_gdf ou input_gdf estao vazios.")
             raise ValueError("grid_gdf e input_gdf não podem estar vazios.")
 
         # Seleciona a unidade específica no grid e aplica índice espacial para otimizar a interseção
-        self.unidade_split = self.grid_gdf[self.grid_gdf["grid_id"] == self.n_grid].geometry.values[0]
+        self.unidade_split = grid_gdf[grid_gdf["grid_id"] == self.n_grid].geometry.values[0]
         
         # Cria um índice espacial para `input_gdf`
         input_sindex = data.sindex
@@ -91,7 +84,7 @@ class Splitter:
         self.gdf_input_intersection = possible_matches[possible_matches.intersects(self.unidade_split)]
 
         #self.logger.info(f'Seleção dos polígonos para split realizada com sucesso, total de {len(self.gdf_input_intersection)} polígonos')
-
+        return None
         
     
     def prepare_split_line(self):       
@@ -164,11 +157,13 @@ class Splitter:
             poly for poly in broken_glass_polygon 
             if poly.representative_point().intersects(self.unidade_split)
         ]
-
+        del self.unidade_split
         self.gdf_broken_glass = gpd.GeoDataFrame(data={"id": range(1, len(filtered_polygons) + 1)}, 
                                                  geometry=filtered_polygons, crs="EPSG:4674")
         elapsed_time = time.time() - operation_start
         #self.logger.info(f"Glass shattering complete, levou {elapsed_time:.2f} segundos para o clip do grid {self.n_grid}!")
+        del self.multi_line_with_nodes
+        return None
 
 
     def calculate_overlapping(self):
@@ -209,7 +204,7 @@ class Splitter:
         elapsed_time = time.time() - operation_start
         #self.logger.info(f"Cálculo de sobreposição realizado. Mapeados {len(id_layers_list)} cacos de vidro.")
         #self.logger.info(f"A operação levou {elapsed_time:.2f} segundos.")
-        
+        del self.gdf_input_intersection
         return None
 
 
@@ -220,20 +215,21 @@ class Splitter:
         #self.gdf_broken_glass.to_file(os.path.join(self.output_path, f'split_{self.n_grid}.geojson'), driver="GeoJSON")
         self.gdf_broken_glass.to_parquet(os.path.join(self.output_path, f'split_{self.n_grid}.parquet'))
         self.logger.info(f"Iteração do grid {self.n_grid} armazenada - Uso de memória : {memory.percent}% - CPU : {cpu_percent}%")
+        
+        del self.gdf_broken_glass
         return None
 
 
-    def run(self, n_grid, data):
+    def run(self, n_grid, data, grid_gdf):
         # Função que processa cada grid específico
-        self.load_data()
-        self.intersection(n_grid, data)
+        self.intersection(n_grid, data, grid_gdf)
         self.prepare_split_line()
         self.perform_split()
         self.calculate_overlapping()
         self.save_results()
 
-    def run_parallel(self, data, grids):
-        run_splitter_partial = partial(self.run, data=data)
+    def run_parallel(self, data, grids,grid_gdf):
+        run_splitter_partial = partial(self.run, data=data,grid_gdf=grid_gdf)
         # Função para execução paralela
         with Pool(processes=self.num_processes) as pool:
             pool.map(run_splitter_partial, grids)

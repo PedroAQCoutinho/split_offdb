@@ -85,9 +85,11 @@ if __name__ == "__main__":
     grids = gpd.read_parquet(config["grid_file"])["grid_id"].tolist()      
     #Carregar camada para split
     data = load_input(config["input_file"])
+    #Carregar o grid
+    grid_gdf = gpd.read_parquet(config["grid_file"])
     #Roda o código aqui !!!!!!!!!!
     splitter = Splitter(config_path='config.json')
-    splitter.run_parallel(data=data, grids=grids)
+    splitter.run_parallel(data=data, grids=grids, grid_gdf=grid_gdf)
 
     # Executa o multiprocessing com a lista de grids
     logger.info("Iniciando multiprocessing para grids")
