@@ -86,7 +86,7 @@ if __name__ == "__main__":
     # Cada processo executa sua parte dos grids
     splitter = Splitter(config_path="config.json")
     for grid_id in grids_local:
-        splitter.run(grid_id, data)
+        splitter.run(grid_id, data=data, grid_gdf=grid_gdf)
 
     # Sincronização dos processos
     comm.Barrier()

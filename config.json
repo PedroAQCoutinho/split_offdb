@@ -3,7 +3,7 @@
     "input_file": "./inputs/input.parquet",
     "arquivos_final":"split_balsas",
     "output_path": "./outputs/",
-    "num_processes": 8,
+    "num_processes": 4,
     "grid_from_clause":"from ibge.pa_br_uf_ibge_2022 a where a.sigla_uf  = 'MA'",
     "input_from_clause":"from car.car_mv c where c.uf = 'MA'",
     "grid_spacing": 0.5,
