@@ -2,7 +2,7 @@
 
 #PBS -N CAR_split
 #PBS -l select=1:ncpus=40:mpiprocs=40
-#PBS -l walltime=96:00:00
+#PBS -l walltime=24:00:00
 #PBS -q atlas
 #PBS -o /home/pquilici/gitworkspace/split_offdb/logs/output.log
 #PBS -e /home/pquilici/gitworkspace/split_offdb/logs/error.log
