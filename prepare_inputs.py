@@ -8,15 +8,20 @@ import logging
 
 class DataProcessor:
     def __init__(self, config_path="config.json", grid_spacing=0.5):
-        # Configuração do logger
-        logging.basicConfig(
-            filename='logs/prepare_inputs.log', 
-            level=logging.INFO, 
-            filemode = 'w',
-            format='%(asctime)s - %(levelname)s - %(message)s'
-        )
-        self.logger = logging.getLogger(__name__)
-        self.logger.info("Inicializando DataProcessor")
+        
+        #Logger
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger.setLevel(logging.DEBUG)        
+        self.logger.propagate = False  # Evita que os logs do splitter apareçam em main.log
+        
+        # Configuração básica de saída para o console
+        file_handler = logging.FileHandler('logs/prepare_inputs.log', mode = 'w')
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        file_handler.setFormatter(formatter)
+        
+        # Adiciona o handler ao logger
+        if not self.logger.hasHandlers():  # Evita duplicação de handlers
+            self.logger.addHandler(file_handler)
 
         # Carregar variáveis do .env para conexão com o banco
         load_dotenv()
@@ -36,7 +41,7 @@ class DataProcessor:
         self.grid_from_clause = config["grid_from_clause"]
 
         # Parâmetro opcional
-        if grid_spacing is None:
+        if grid_spacing==0.5:
             self.grid_spacing = config["grid_spacing"]
         else:
             self.grid_spacing = grid_spacing
@@ -60,6 +65,7 @@ class DataProcessor:
         {self.input_from_clause};
         """
         #print(query)
+        #print(query)
         # Carregar os dados em um GeoDataFrame
         try:
             gdf = gpd.read_postgis(query, self.engine, geom_col="geom")
@@ -73,12 +79,13 @@ class DataProcessor:
             self.logger.error(f"Erro ao carregar dados dos municípios: {e}")
             raise ValueError("É necessária a geometria para prosseguir")
 
+
     def export_municipio_data(self, gdf):
         try:
-            print('Salvando arquivos grids...')
+            print('Salvando arquivos inputs...')
             gdf.to_parquet(self.output_parquet)
             self.logger.info(f"Arquivo Parquet exportado com sucesso para {self.output_parquet}")
-            #gdf.to_file(self.output_parquet.replace(".parquet", ".gpkg"), layer='input', driver="GPKG")
+            gdf.to_file(self.output_parquet.replace(".parquet", ".gpkg"), layer='input', driver="GPKG")
             print('Salvo ! ')
         except Exception as e:
             self.logger.error(f"Erro ao exportar dados dos municípios: {e}")
@@ -152,7 +159,7 @@ class DataProcessor:
 #     start_time = time.time()
 
 #     # Usa partial para fixar os primeiros três argumentos
-#     dataprocessor = DataProcessor(grid_spacing=0.5)
+#     dataprocessor = DataProcessor()
 #     dataprocessor.run()
 
 

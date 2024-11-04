@@ -79,21 +79,20 @@ if __name__ == "__main__":
     else:
         print('Skipping prepare_inputs.py')
 
-    #Carregar input
+
+    #Carrega inputs !!
+    #Lista de grids para iteração baseado no grid file gerado
+    grids = gpd.read_parquet(config["grid_file"])["grid_id"].tolist()      
+    #Carregar camada para split
     data = load_input(config["input_file"])
-
-    # Usar functools.partial para passar `config` como parâmetro fixo para `run_splitter`
-    run_splitter_partial = partial(run_splitter, data=data, config="config.json")
-
-    # Carrega os IDs dos grids
-    gdf = gpd.read_parquet(config["grid_file"])
-    grids = gdf["grid_id"].tolist()
+    #Roda o código aqui !!!!!!!!!!
+    splitter = Splitter(config_path='config.json')
+    splitter.run_parallel(data=data, grids=grids)
 
     # Executa o multiprocessing com a lista de grids
     logger.info("Iniciando multiprocessing para grids")
     #Paralelismo baseado em multiprocessing
-    with Pool(processes=config['num_processes']) as pool:
-        pool.map(run_splitter_partial, grids)
+
 
     # Calcula o tempo decorrido para o grid_spacing atual
     elapsed_time = time.time() - start_time

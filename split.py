@@ -7,7 +7,10 @@ import json
 import time
 import os
 import shapely as shp
-
+from multiprocessing import Pool
+from functools import partial
+import numpy as np
+import psutil
 
 
 def load_input(input_file):
@@ -29,6 +32,7 @@ class Splitter:
         self.input_file = config["input_file"]
         self.output_path = config["output_path"]
         self.num_processes = config["num_processes"]
+        self.memory = psutil.virtual_memory()
 
         # Cria vazios
         self.grid_gdf = None
@@ -38,9 +42,11 @@ class Splitter:
         #Logger
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logger.setLevel(logging.DEBUG)        
+        #self.logger.propagate = False  # Evita que os logs do splitter apareçam em main.log
         
         # Configuração básica de saída para o console
-        file_handler = logging.FileHandler('logs/splitter.log', mode = 'w')
+        file_handler = logging.FileHandler('logs/splitter.log', mode='w', encoding='utf-8')
+
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         file_handler.setFormatter(formatter)
         
@@ -53,7 +59,7 @@ class Splitter:
     def load_data(self):
         # Carregar o arquivo grid e selecionar o polígono específico
         self.grid_gdf = gpd.read_parquet(self.grid_file)
-        self.logger.info(f'grid carregado com sucesso a partir de {self.grid_file}')
+        #self.logger.info(f'grid carregado com sucesso a partir de {self.grid_file}')
 
         #Só retorna esse para que
         return None
@@ -64,11 +70,11 @@ class Splitter:
 
         # Verificar se grid_gdf e input_gdf estão carregados
         if self.grid_gdf is None or data is None:
-            self.logger.error("grid_gdf ou input_gdf não estão carregados.")
+            self.logger.error("grid_gdf ou input_gdf nao estao carregados.")
             raise ValueError("grid_gdf e input_gdf devem estar carregados antes de chamar intersection.")
         
         if self.grid_gdf.empty or data.empty:
-            self.logger.error("grid_gdf ou input_gdf estão vazios.")
+            self.logger.error("grid_gdf ou input_gdf estao vazios.")
             raise ValueError("grid_gdf e input_gdf não podem estar vazios.")
 
         # Seleciona a unidade específica no grid e aplica índice espacial para otimizar a interseção
@@ -84,7 +90,7 @@ class Splitter:
         # Filtra apenas as interseções reais
         self.gdf_input_intersection = possible_matches[possible_matches.intersects(self.unidade_split)]
 
-        self.logger.info(f'Seleção dos polígonos para split realizada com sucesso, total de {len(self.gdf_input_intersection)} polígonos')
+        #self.logger.info(f'Seleção dos polígonos para split realizada com sucesso, total de {len(self.gdf_input_intersection)} polígonos')
 
         
     
@@ -141,7 +147,7 @@ class Splitter:
 
         #Cria uma única geometria de Linestring forçada
         # self.forced_line = LineString(combined_points)
-        self.logger.info(f'Multi Line criada com sucesso !')
+        #self.logger.info(f'Multi Line criada com sucesso !')
 
         return None
 
@@ -162,7 +168,7 @@ class Splitter:
         self.gdf_broken_glass = gpd.GeoDataFrame(data={"id": range(1, len(filtered_polygons) + 1)}, 
                                                  geometry=filtered_polygons, crs="EPSG:4674")
         elapsed_time = time.time() - operation_start
-        self.logger.info(f"Glass shattering complete, levou {elapsed_time:.2f} segundos para o clip do grid {self.n_grid}!")
+        #self.logger.info(f"Glass shattering complete, levou {elapsed_time:.2f} segundos para o clip do grid {self.n_grid}!")
 
 
     def calculate_overlapping(self):
@@ -201,28 +207,36 @@ class Splitter:
         
         # Log com o tempo total de operação
         elapsed_time = time.time() - operation_start
-        self.logger.info(f"Cálculo de sobreposição realizado. Mapeados {len(id_layers_list)} cacos de vidro.")
-        self.logger.info(f"A operação levou {elapsed_time:.2f} segundos.")
+        #self.logger.info(f"Cálculo de sobreposição realizado. Mapeados {len(id_layers_list)} cacos de vidro.")
+        #self.logger.info(f"A operação levou {elapsed_time:.2f} segundos.")
         
         return None
 
 
     def save_results(self):
+        memory = psutil.virtual_memory()
+        cpu_percent = psutil.cpu_percent(interval=0.1)
         # Salvar resultados em GeoJSON e Parquet
         #self.gdf_broken_glass.to_file(os.path.join(self.output_path, f'split_{self.n_grid}.geojson'), driver="GeoJSON")
         self.gdf_broken_glass.to_parquet(os.path.join(self.output_path, f'split_{self.n_grid}.parquet'))
-        self.logger.info(f"Resultados salvos com sucesso da iteração do grid {self.n_grid}.")
+        self.logger.info(f"Iteração do grid {self.n_grid} armazenada - Uso de memória : {memory.percent}% - CPU : {cpu_percent}%")
         return None
 
 
     def run(self, n_grid, data):
+        # Função que processa cada grid específico
         self.load_data()
         self.intersection(n_grid, data)
         self.prepare_split_line()
         self.perform_split()
         self.calculate_overlapping()
         self.save_results()
-        return None
+
+    def run_parallel(self, data, grids):
+        run_splitter_partial = partial(self.run, data=data)
+        # Função para execução paralela
+        with Pool(processes=self.num_processes) as pool:
+            pool.map(run_splitter_partial, grids)
 
 
 
@@ -231,16 +245,20 @@ class Splitter:
 # if __name__ == "__main__":
 
 
-#    start_time = time.time()
+#     start_time = time.time()
 
- 
-#    splitter = Splitter()
-#    splitter.load_data()
-#    splitter.intersection(187)
-#    splitter.prepare_split_line()
-#    splitter.perform_split()
-#    splitter.calculate_overlapping()
-#    splitter.save_results()
+#     with open("config.json", "r") as f:
+#         config = json.load(f)  
+
+#     data = load_input(config["input_file"])
+   
+#     splitter = Splitter()
+#     splitter.load_data()
+#     splitter.intersection(13, data)
+#     splitter.prepare_split_line()
+#     splitter.perform_split()
+#     splitter.calculate_overlapping()
+#     splitter.save_results()
 
 
  
