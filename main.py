@@ -10,7 +10,6 @@ from split import Splitter, load_input
 from prepare_inputs import DataProcessor
 import subprocess
 
-
 # Configuração do logger para main.log
 logging.basicConfig(
     filename='logs/main.log',
@@ -19,7 +18,6 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
 
 # Função para mesclar os arquivos Parquet gerados
 def merge_parquet_files(folder_path, output_file="merged_output"):
@@ -34,13 +32,13 @@ def merge_parquet_files(folder_path, output_file="merged_output"):
     elapsed_merge = time.time() - start_merge
     logger.info(f"Tempo para merge dos arquivos Parquet: {elapsed_merge:.2f} segundos")
 
-
 # Função principal para execução em HPC
 if __name__ == "__main__":
     # Inicialização do MPI
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     size = comm.Get_size()
+    print(f'Rank = {rank}')
 
     start_time = time.time()
     if rank == 0:
@@ -57,14 +55,13 @@ if __name__ == "__main__":
         os.makedirs('finais', exist_ok=True)
 
         # Preparação dos dados de entrada, executada apenas pelo processo mestre
-        if not config["skip_prepare_inputs"]:
+        if not config.get("skip_prepare_inputs", False):
             dataprocessor = DataProcessor()
             dataprocessor.run()
         else:
-            print("Skipping prepare_inputs.py")
+            logger.info("Pulando preparação de dados (skip_prepare_inputs ativado)")
 
-        # Carregar dados e grids
-        data = load_input(config["input_file"])
+        # Carrega apenas a lista de grids para divisão entre processos
         grid_gdf = gpd.read_parquet(config["grid_file"])
         grids = grid_gdf["grid_id"].tolist()
 
@@ -73,15 +70,15 @@ if __name__ == "__main__":
     else:
         # Inicializa variáveis para processos que não são o mestre
         config = None
-        data = None
-        grid_gdf = None
         grids_split = None
 
-    # Broadcast da configuração e dos dados para todos os processos
+    # Broadcast da configuração e da lista de grids para todos os processos
     config = comm.bcast(config, root=0)
-    data = comm.bcast(data, root=0)
-    grid_gdf = comm.bcast(grid_gdf, root=0)
     grids_local = comm.scatter(grids_split, root=0)
+
+    # Cada processo lê o arquivo Parquet localmente
+    data = gpd.read_parquet(config["input_file"])
+    grid_gdf = gpd.read_parquet(config["grid_file"])
 
     # Cada processo executa sua parte dos grids
     splitter = Splitter(config_path="config.json")
