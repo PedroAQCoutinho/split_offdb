@@ -228,11 +228,6 @@ class Splitter:
         self.calculate_overlapping()
         self.save_results()
 
-    def run_parallel(self, data, grids,grid_gdf):
-        run_splitter_partial = partial(self.run, data=data,grid_gdf=grid_gdf)
-        # Função para execução paralela
-        with Pool(processes=self.num_processes) as pool:
-            pool.map(run_splitter_partial, grids)
 
 
 
