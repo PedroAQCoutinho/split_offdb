@@ -222,11 +222,20 @@ class Splitter:
 
     def run(self, n_grid, data, grid_gdf):
         # Função que processa cada grid específico
-        self.intersection(n_grid, data, grid_gdf)
-        self.prepare_split_line()
-        self.perform_split()
-        self.calculate_overlapping()
-        self.save_results()
+        try:
+            self.intersection(n_grid, data, grid_gdf)
+            self.prepare_split_line()
+            self.perform_split()
+            self.calculate_overlapping()
+            self.save_results()
+        #Se der erro prossegue 
+        except Exception as e:
+            # Registra o n_grid no arquivo de erro
+            with open("logs/error_grids.txt", "a") as error_file:
+                error_file.write(f"{n_grid}\n")
+            self.logger.error(f"Iteração do grid {self.n_grid} ERRO {e}")
+        
+
 
     def run_parallel(self, data, grids,grid_gdf):
         run_splitter_partial = partial(self.run, data=data,grid_gdf=grid_gdf)
