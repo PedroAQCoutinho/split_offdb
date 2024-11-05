@@ -4,6 +4,8 @@
 #PBS -l select=1:ncpus=40
 #PBS -l walltime=96:00:00
 #PBS -q atlas
+#PBS -o /home/pquilici/gitworkspace/split_offdb/logs/submeter.output
+#PBS -e /home/pquilici/gitworkspace/split_offdb/logs/submeter.error
 #PBS -oe
 #PBS -m abe
 #PBS -M paq.coutinho@gmail.com
