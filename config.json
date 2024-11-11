@@ -1,9 +1,9 @@
 {
     "grid_file": "./inputs/grid.parquet",
     "input_file": "./inputs/input.parquet",
-    "arquivos_final":"split_balsas",
+    "arquivos_final":"split_avaliacao_impacto",
     "output_path": "./outputs/",
-    "num_processes": 8,
+    "num_processes": 10,
     "grid_from_clause":"from ibge.pa_br_uf_ibge_2022 a where a.sigla_uf  = 'MA'",
     "input_from_clause":"from car.car_mv c where c.uf = 'MA'",
     "grid_spacing": 0.5,
