@@ -1,5 +1,5 @@
 import geopandas as gpd
-from shapely.geometry import LineString, MultiPolygon, MultiLineString
+from shapely.geometry import MultiLineString, LineString, Polygon, MultiPolygon, LinearRing
 from shapely.ops import split, linemerge, polygonize
 import pandas as pd
 import logging
@@ -10,6 +10,7 @@ import shapely as shp
 from multiprocessing import Pool
 from functools import partial
 import numpy as np
+from rtree import index
 import psutil
 
 
@@ -57,6 +58,80 @@ class Splitter:
         self.logger.debug(f"Splitter initialized with grid_path: {self.grid_file} AND input_path: {self.input_file}")
 
 
+
+    def _intersection(self, n_grid, data, grid_gdf):
+        start_time=time.time()
+        self.n_grid = n_grid
+
+        try:
+            # Verificar se grid_gdf e input_gdf estão carregados
+            if grid_gdf is None or data is None:
+                self.logger.error("grid_gdf ou input_gdf nao estao carregados.")
+                raise ValueError("grid_gdf e input_gdf devem estar carregados antes de chamar intersection.")
+            
+            if grid_gdf.empty or data.empty:
+                self.logger.error("grid_gdf ou input_gdf estao vazios.")
+                raise ValueError("grid_gdf e input_gdf não podem estar vazios.")
+
+            # Seleciona a unidade específica no grid e aplica índice espacial para otimizar a interseção
+            self.unidade_split = grid_gdf[grid_gdf["grid_id"] == self.n_grid].geometry.values[0]
+    
+            
+            # Cria um índice espacial para `input_gdf`
+            input_sindex = data.sindex
+
+            # Filtra apenas as geometrias que têm bbox sobrepondo `unidade_split`
+            possible_matches_index = list(input_sindex.intersection(self.unidade_split.bounds))
+            possible_matches = data.iloc[possible_matches_index]
+
+            
+
+            # Calcula as interseções reais e armazena apenas as interseções não vazias
+            intersections=[]
+            intersecting_ids=[]
+            intersecting_id_layers=[]
+            # Itera sobre as geometrias
+            for index, row in possible_matches.iterrows():
+                geom=row.geom
+                if isinstance(geom, Polygon):
+                    geom=geom
+                elif isinstance(geom, MultiPolygon):
+                    geom=geom.geoms[0]
+
+                if geom.is_valid:
+                    intersection = self.unidade_split.intersection(geom)
+                    if isinstance(intersection, Polygon):
+                        intersection=intersection
+                    elif isinstance(intersection, MultiPolygon):
+                        intersection=intersection.geoms[0]
+                else:
+                    #pula para o proximo loop, de modo a eliminar geometria inválida
+                    continue
+
+
+                # Checa se a interseção é válida e não está vazia
+                if not intersection.is_empty and intersection.is_valid:
+                    intersections.append(intersection)
+                    intersecting_ids.append(row['id'])  # Armazena o 'id' da geometria original
+                    intersecting_id_layers.append(row['id_layer'])
+                else:
+                    #Continue para o próximo loop, descartando geometria inválida
+                    continue
+
+            # Cria um novo GeoDataFrame com as interseções reais
+            self.gdf_input_intersection = gpd.GeoDataFrame(
+                    data={'id': intersecting_ids, 'id_layer': intersecting_id_layers, 'geom': intersections},  # Inclui o ID original da geometria que intersectou
+                    geometry='geom',
+                    crs='EPSG:4674')
+        except Exception as e:
+            logging.error(f'Função _intersect na iteração {self.n_grid} deu o problema {e}')
+
+        elapsed_time=time.time()-start_time
+        return f'{elapsed_time:.2f}'
+
+
+
+
     def intersection(self, n_grid, data, grid_gdf):
             
         self.n_grid = n_grid
@@ -84,131 +159,148 @@ class Splitter:
         self.gdf_input_intersection = possible_matches[possible_matches.intersects(self.unidade_split)]
 
         #self.logger.info(f'Seleção dos polígonos para split realizada com sucesso, total de {len(self.gdf_input_intersection)} polígonos')
-        return None
+        return self.gdf_input_intersection
         
     
-    def prepare_split_line(self):       
+    def prepare_split_line(self):
+        self.counter=0
+        start_time=time.time()
+        """Essa funcao é a mais complicada do código
+        O que ela se propõe a fazer é simples: Gerar uma MultiLinestring que será inputada no shp.node()
+        Essa multilinestring deve ser construída da maneira mais manual possível"""
+        try:
+            linerings=[]
+            #Temos que assumir que todos os poligonos de entrada devem formar lines rings. Caso isso não seja possível a geometria deve ser descartada
+            for index, row in self.gdf_input_intersection.iterrows():
+                #Seleciona geometria do dado
+                geom=row.geom           
+                #Se for multipolygon, seleciona o primeiro polygon da feição e pega o boundary. Aqui todas as geometria sao validas
+                if isinstance(geom, MultiPolygon):   
+                    geom= geom.geoms[0]
+                    line=geom.exterior
+                elif isinstance(geom, Polygon):
+                    geom = geom
+                    line=geom.exterior # A funcao exterior é um sacada, ao invés de usar a boundary. Ler documentacao para compreender.
 
-        # Criar linhas a partir dos limites dessas geometrias e mesclá-las
-        lines = []
+                #Se a linha for válida, appenda na lista de linearRings, se não for válida, joga no lixo pelo bem da humanidade
+                if line.is_valid:
+                    line=LinearRing(line)
+                    linerings.append(line)
+                else:
+                    self.counter+=1
+                    print(f"Feição descartada - ID: {row['id']}, ID Layer: {row['name']}, Geometria: {geom}")
+                    #passa pro promixo loop
+                    continue   
 
-        for geom in self.gdf_input_intersection.geometry:
-            merged_line = linemerge(geom.boundary)
             
-            if isinstance(merged_line, MultiLineString):
-                
-                # Se for MultiLineString, combinar seus pontos em uma única LineString
-                points = []
-                for line in merged_line.geoms:
-                    points.extend(line.coords)  # Extrai coordenadas de cada LineString
-                
-                # Cria uma nova LineString com todos os pontos
-                merged_line = LineString(points)
-                
-            lines.append(merged_line)
-                
-        lines.append(self.unidade_split.boundary)
-          
+            try:            
+                #Appenda o grid, para que seja feita a reconstrucao total do grid
+                linerings.append(LinearRing(self.unidade_split.exterior))
+                #Cria um MultiLineString a partir de todas as linhas
+                multi_line=MultiLineString(linerings)
+                #Cria o MultiLineString com nós
+                self.multi_line_with_nodes=shp.node(multi_line)        
+            except Exception as e:
+                logging.error(f'Nâo foi possivel formar o MultiLinestring pelo motivo {e}')
 
-        # Cria o MultiLineString a partir das linhas
-        multi_line = MultiLineString(lines) 
-        multi_line = multi_line.simplify(tolerance=0.0001, preserve_topology=True)
-        
-        # Usa shapely.node para adicionar nós (pontos de interseção) ao MultiLineString
-        self.multi_line_with_nodes = shp.node(multi_line)
+        except Exception as e:
+            logging.error(f'Função prepare_split_line na iteração {self.n_grid} deu o problema {e}')
 
-
-
-        
-        # lines_gdf=gpd.GeoDataFrame(geometry=lines)
-        # #Combinação de pontos em uma única linha
-        # combined_points = []
-
-        # for line in lines_gdf.geometry:
-        #     # Verifica se a geometria é LineString ou MultiLineString
-        #     if isinstance(line, LineString):
-        #         # Se for LineString, adiciona as coordenadas diretamente
-        #         combined_points.extend(list(line.coords))
-        #     elif isinstance(line, MultiLineString):
-        #         # Se for MultiLineString, extrai as coordenadas de cada LineString componente
-        #         for linestring in line.geoms:
-        #             combined_points.extend(list(linestring.coords))
-        #     else:
-        #         # Lança um erro para tipos de geometria não suportados
-        #         raise TypeError(f"Tipo de geometria não suportado: {type(line)}")
-
-
-        #Cria uma única geometria de Linestring forçada
-        # self.forced_line = LineString(combined_points)
-        #self.logger.info(f'Multi Line criada com sucesso !')
-
-        return None
+        elapsed_time=time.time()-start_time
+        return f'{elapsed_time:.2f}'
 
     def perform_split(self):
         
         # Inicia o cronômetro para a operaçãorm ou  
-        operation_start = time.time()
-        
-        # Dividir o polígono usando a linha forçada
-        broken_glass_polygon = list(polygonize(self.multi_line_with_nodes))
-        
-        # Filtra apenas os polígonos cujo representative_point intersecta unidade_split
-        filtered_polygons = [
-            poly for poly in broken_glass_polygon 
-            if poly.representative_point().intersects(self.unidade_split)
-        ]
-        del self.unidade_split
-        self.gdf_broken_glass = gpd.GeoDataFrame(data={"id": range(1, len(filtered_polygons) + 1)}, 
-                                                 geometry=filtered_polygons, crs="EPSG:4674")
-        elapsed_time = time.time() - operation_start
-        #self.logger.info(f"Glass shattering complete, levou {elapsed_time:.2f} segundos para o clip do grid {self.n_grid}!")
-        del self.multi_line_with_nodes
-        return None
+        start_time = time.time()
+        try:
+            # Dividir o polígono usando a linha forçada
+            broken_glass_polygon = list(polygonize(self.multi_line_with_nodes))
+            
+            
+            # Filtra apenas os polígonos cujo representative_point intersecta unidade_split
+            filtered_polygons = [
+                poly for poly in broken_glass_polygon 
+                if poly.representative_point().intersects(self.unidade_split)
+            ]
+            
+            del self.unidade_split
+            self.gdf_broken_glass = gpd.GeoDataFrame(data={"id": range(1, len(filtered_polygons) + 1)}, 
+                                                    geometry=filtered_polygons, crs="EPSG:4674")
+            #elapsed_time = time.time() - operation_start
+            #self.logger.info(f"Glass shattering complete, levou {elapsed_time:.2f} segundos para o clip do grid {self.n_grid}!")
+            del self.multi_line_with_nodes
+        except Exception as e:
+            logging.error(f'Função perform_split na iteração {self.n_grid} deu o problema {e}')
+
+        elapsed_time=time.time()-start_time
+        return f'{elapsed_time:.2f}'
+
+
+
 
 
     def calculate_overlapping(self):
         # Inicia o cronômetro para a operação
-        operation_start = time.time()
-        
-        # Calcular ponto representativo e verificar sobreposição
-        self.gdf_broken_glass["representative_point"] = self.gdf_broken_glass.geometry.apply(lambda x: x.representative_point())
-        
-        # Inicializa listas para armazenar as listas de `id_layer` e `id_feature`
-        id_layers_list = []
-        id_features_list = []
-        
-        for index, shard in self.gdf_broken_glass.iterrows():
-            glass_shard_point = shard["representative_point"]
-            overlapping_polygons = self.gdf_input_intersection[self.gdf_input_intersection.contains(glass_shard_point)]
-            
-            # Define id_layers e id_features para cada caso
-            if not overlapping_polygons.empty:
-                id_layers = ['GRID'] + overlapping_polygons["id_layer"].tolist()
-                id_features = [self.n_grid] + overlapping_polygons["id"].tolist()
-            else:
-                id_layers = ['GRID']
-                id_features = [self.n_grid]
-            
-            # Armazena as listas para cada fragmento
-            id_layers_list.append(id_layers)
-            id_features_list.append(id_features)
-        
-        # Remover a coluna de ponto representativo
-        self.gdf_broken_glass.drop(columns="representative_point", inplace=True)
-        
-        # Adiciona as listas como novas colunas no gdf_broken_glass
-        self.gdf_broken_glass["id_layer"] = id_layers_list
-        self.gdf_broken_glass["id_feature"] = id_features_list
-        
-        # Log com o tempo total de operação
-        elapsed_time = time.time() - operation_start
-        #self.logger.info(f"Cálculo de sobreposição realizado. Mapeados {len(id_layers_list)} cacos de vidro.")
-        #self.logger.info(f"A operação levou {elapsed_time:.2f} segundos.")
+        start_time = time.time()
+        try:
+            # Calcular ponto representativo para cada geometria
+            self.gdf_broken_glass["representative_point"] = self.gdf_broken_glass.geometry.apply(lambda x: x.representative_point())
+
+            # Inicializa listas para armazenar os `id_layer` e `id_feature`
+            id_layers_list = []
+            id_features_list = []
+
+            # Cria um índice espacial para os polígonos em gdf_input_intersection
+            spatial_index = index.Index()
+            for idx, poly in self.gdf_input_intersection.iterrows(): 
+                geom=poly.geom
+                spatial_index.insert(idx, geom.bounds)
+
+            # Itera sobre cada fragmento de vidro
+            for idx, shard in self.gdf_broken_glass.iterrows():
+                glass_shard_point = shard["representative_point"]
+
+                # Encontra os índices dos polígonos candidatos usando o índice espacial
+                possible_matches_index = list(spatial_index.intersection(glass_shard_point.bounds))
+                possible_matches = self.gdf_input_intersection.iloc[possible_matches_index]
+
+                # Filtra os polígonos que realmente contêm o ponto representativo
+                overlapping_polygons = possible_matches[possible_matches.contains(glass_shard_point)]
+
+                # Define id_layers e id_features para cada caso
+                if not overlapping_polygons.empty:
+                    id_layers = ['GRID'] + overlapping_polygons["id_layer"].tolist()
+                    id_features = [self.n_grid] + overlapping_polygons["id"].tolist()
+                else:
+                    id_layers = ['GRID']
+                    id_features = [self.n_grid]
+
+                # Armazena as listas para cada fragmento
+                id_layers_list.append(id_layers)
+                id_features_list.append(id_features)
+
+            # Remove a coluna de ponto representativo
+            self.gdf_broken_glass.drop(columns="representative_point", inplace=True)
+
+            # Adiciona as listas como novas colunas no gdf_broken_glass
+            self.gdf_broken_glass["id_layer"] = id_layers_list
+            self.gdf_broken_glass["id_feature"] = id_features_list
+
+        except Exception as e:
+            logging.error(f'Função calculate_overlapping na iteração {getattr(self, "n_grid", "N/A")} deu o problema {e}')
+
+        # Limpa o gdf_input_intersection da memória
         del self.gdf_input_intersection
-        return None
+
+        # Log do tempo total de operação
+        elapsed_time = time.time() - start_time
+        return f'{elapsed_time:.2f}'
+
 
 
     def save_results(self):
+        start_time=time.time()
         memory = psutil.virtual_memory()
         cpu_percent = psutil.cpu_percent(interval=0.1)
         # Salvar resultados em GeoJSON e Parquet
@@ -217,23 +309,35 @@ class Splitter:
         self.logger.info(f"Iteração do grid {self.n_grid} armazenada - Uso de memória : {memory.percent}% - CPU : {cpu_percent}%")
         
         del self.gdf_broken_glass
-        return None
+        elapsed_time=time.time()-start_time
+        return f'{elapsed_time:.2f}'
 
 
     def run(self, n_grid, data, grid_gdf):
         # Função que processa cada grid específico
+        start_time=time.time()
         try:
-            self.intersection(n_grid, data, grid_gdf)
-            self.prepare_split_line()
-            self.perform_split()
-            self.calculate_overlapping()
-            self.save_results()
+            intersection_time=self._intersection(n_grid, data, grid_gdf)
+            prepare_lines_time=self.prepare_split_line()
+            perform_split_time=self.perform_split()
+            overlapping_time=self.calculate_overlapping()
+            save_time=self.save_results()
+            elapsed_time=time.time()-start_time
+            tempos={'intersection_time':intersection_time,
+                    'prepare_lines_time':prepare_lines_time,
+                    'perform_split_time':perform_split_time,
+                    'overlapping_time':overlapping_time,
+                    'save_time':save_time}
+            # Encontrar o maior tempo e a chave correspondente
+            max_time_func, max_time_value = max(tempos.items(), key=lambda item: item[1])
+            logging.info(f'Iteração completa para o {n_grid} levou {elapsed_time:.2f} e a operação que levou mais tempo foi a funcao {max_time_func} com {max_time_value} e descartou {self.counter} feicoes')
         #Se der erro prossegue 
         except Exception as e:
             # Registra o n_grid no arquivo de erro
             with open("logs/error_grids.txt", "a") as error_file:
                 error_file.write(f"{n_grid}\n")
             self.logger.error(f"Iteração do grid {self.n_grid} ERRO {e}")
+            
         
 
 
@@ -259,6 +363,7 @@ class Splitter:
    
 #     splitter = Splitter()
 #     splitter.load_data()
+#     splitter._intersection(13, data) # Foi criada a _intersection pois a antiga fazia apenas o touches, o que sobrecarregava a memoria
 #     splitter.intersection(13, data)
 #     splitter.prepare_split_line()
 #     splitter.perform_split()
