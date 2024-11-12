@@ -59,7 +59,7 @@ class DataProcessor:
     def load_municipio_data(self):
         # Montar a query com base no parâmetro municipios
         query = f"""
-        SELECT c.ogc_fid AS id, 
+        SELECT c.gid AS id, 
                'CAR' AS id_layer, 
                ST_CollectionExtract(c.geom,3) geom 
         {self.input_from_clause};
