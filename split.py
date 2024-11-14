@@ -22,9 +22,12 @@ def load_input(input_file):
 
 class Splitter:
 
-    def __init__(self, config_path="config.json"):
+    def __init__(self, data=None, config_path="config.json"):
 
-                # Carregar configuração do arquivo JSON
+        if data is None:
+            raise ValueError("Data cannot be None")
+        
+        # Carregar configuração do arquivo JSON
         with open(config_path, "r") as f:
             config = json.load(f)
 
@@ -58,6 +61,12 @@ class Splitter:
         self.logger.debug(f"Splitter initialized with grid_path: {self.grid_file} AND input_path: {self.input_file}")
 
 
+        # Cria um índice espacial para `input_gdf`
+        self.input_sindex = data.sindex
+        logging.info('Indices criados com sucesso !')
+
+
+
 
     def _intersection(self, n_grid, data, grid_gdf):
         start_time=time.time()
@@ -77,11 +86,10 @@ class Splitter:
             self.unidade_split = grid_gdf[grid_gdf["grid_id"] == self.n_grid].geometry.values[0]
     
             
-            # Cria um índice espacial para `input_gdf`
-            input_sindex = data.sindex
+
 
             # Filtra apenas as geometrias que têm bbox sobrepondo `unidade_split`
-            possible_matches_index = list(input_sindex.intersection(self.unidade_split.bounds))
+            possible_matches_index = list(self.input_sindex.intersection(self.unidade_split.bounds))
             possible_matches = data.iloc[possible_matches_index]
 
             
@@ -149,10 +157,10 @@ class Splitter:
         self.unidade_split = grid_gdf[grid_gdf["grid_id"] == self.n_grid].geometry.values[0]
         
         # Cria um índice espacial para `input_gdf`
-        input_sindex = data.sindex
+        #self.input_sindex = data.sindex
 
         # Filtra apenas as geometrias que têm bbox sobrepondo `unidade_split`
-        possible_matches_index = list(input_sindex.intersection(self.unidade_split.bounds))
+        possible_matches_index = list(self.input_sindex.intersection(self.unidade_split.bounds))
         possible_matches = data.iloc[possible_matches_index]
 
         # Filtra apenas as interseções reais
