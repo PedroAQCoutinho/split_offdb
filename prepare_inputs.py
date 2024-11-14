@@ -59,9 +59,6 @@ class DataProcessor:
     def load_municipio_data(self):
         # Montar a query com base no parâmetro municipios
         query = f"""
-        SELECT c.gid AS id, 
-               'CAR' AS id_layer, 
-               ST_CollectionExtract(c.geom,3) geom 
         {self.input_from_clause};
         """
         #print(query)
@@ -94,17 +91,7 @@ class DataProcessor:
         
         # Construir a query de grid usando as cláusulas do config.json
         grid_query = f"""
-        WITH resultado_municipio AS (
-            SELECT geom {self.input_from_clause}
-        ),
-        envelope AS (
-            SELECT geom AS bbox {self.grid_from_clause}
-        ),
-        grid AS (
-            SELECT (ST_SquareGrid({self.grid_spacing}, bbox)).geom AS geom
-            FROM envelope
-        )
-        SELECT row_number() OVER () AS grid_id, geom FROM grid;
+        {self.grid_from_clause}
         """
         
         #print(grid_query)  # Apenas para debug
