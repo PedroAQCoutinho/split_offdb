@@ -8,4 +8,4 @@ psycopg2-binary
 matplotlib
 numpy
 pyarrow
-
+rtree

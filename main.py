@@ -11,6 +11,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import subprocess
+from rtree import index
 
 
 # Configuração do logger para main.log
@@ -61,7 +62,7 @@ def merge_parquet_files(folder_path, output_file="merged_output"):
 
 # Executa o loop de grid spacing e mede o tempo
 if __name__ == "__main__":
-
+    
     start_time = time.time()
     logger.info("Iniciando processamento geral")
 
@@ -71,6 +72,7 @@ if __name__ == "__main__":
 
     # Skip prepare ?
     skip_prepare_inputs = config["skip_prepare_inputs"]
+
 
     if not skip_prepare_inputs:
         # Executa o DataProcessor com o grid_spacing atual
@@ -85,10 +87,12 @@ if __name__ == "__main__":
     grids = gpd.read_parquet(config["grid_file"])["grid_id"].tolist()      
     #Carregar camada para split
     data = load_input(config["input_file"])
+
     #Carregar o grid
     grid_gdf = gpd.read_parquet(config["grid_file"])
+
     #Roda o código aqui !!!!!!!!!!
-    splitter = Splitter(config_path='config.json')
+    splitter = Splitter(data, config_path='config.json')
     splitter.run_parallel(data=data, grids=grids, grid_gdf=grid_gdf)
 
     # Executa o multiprocessing com a lista de grids
