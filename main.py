@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import subprocess
 from rtree import index
-
+import re
 
 # Configuração do logger para main.log
 logging.basicConfig(
@@ -84,7 +84,11 @@ if __name__ == "__main__":
 
     #Carrega inputs !!
     #Lista de grids para iteração baseado no grid file gerado
-    grids = gpd.read_parquet(config["grid_file"])["grid_id"].tolist()      
+    grids = gpd.read_parquet(config["grid_file"])["grid_id"].tolist()     
+    files = os.listdir(config['output_path'])
+    numbers = [int(re.search(r'\d+', filename).group()) for filename in files if re.search(r'\d+', filename)]
+    grids = [grid for grid in grids if grid not in numbers]
+ 
     #Carregar camada para split
     data = load_input(config["input_file"])
 
