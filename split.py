@@ -12,6 +12,9 @@ from functools import partial
 import numpy as np
 from rtree import index
 import psutil
+from shapely.strtree import STRtree
+from sqlalchemy import create_engine
+from dotenv import load_dotenv
 
 
 def load_input(input_file):
@@ -22,11 +25,19 @@ def load_input(input_file):
 
 class Splitter:
 
-    def __init__(self, data=None, config_path="config.json"):
-
-        if data is None:
-            raise ValueError("Data cannot be None")
+    def __init__(self, config_path="config.json"):
         
+        # Carregar variáveis do .env para conexão com o banco
+        load_dotenv()
+        self.db_user = os.getenv("DB_USER")
+        self.db_password = os.getenv("DB_PASSWORD")
+        self.db_host = os.getenv("DB_HOST")
+        self.db_port = os.getenv("DB_PORT")
+        self.db_name = os.getenv("DB_NAME")
+
+
+ 
+
         # Carregar configuração do arquivo JSON
         with open(config_path, "r") as f:
             config = json.load(f)
@@ -36,6 +47,7 @@ class Splitter:
         self.input_file = config["input_file"]
         self.output_path = config["output_path"]
         self.num_processes = config["num_processes"]
+        self.split_table_name = config["split_table_name"]
         self.memory = psutil.virtual_memory()
 
         # Cria vazios
@@ -58,13 +70,10 @@ class Splitter:
         if not self.logger.hasHandlers():  # Evita duplicação de handlers
             self.logger.addHandler(file_handler)
 
-        self.logger.debug(f"Splitter initialized with grid_path: {self.grid_file} AND input_path: {self.input_file}")
+        self.logger.info(f"Splitter initialized with grid_path: {self.grid_file} AND input_path: {self.input_file}")
 
 
-        # Cria um índice espacial para `input_gdf`
-        self.input_sindex = data.sindex
-        logging.info('Indices criados com sucesso !')
-
+  
 
 
 
@@ -131,6 +140,10 @@ class Splitter:
                     data={'id': intersecting_ids, 'id_layer': intersecting_id_layers, 'geom': intersections},  # Inclui o ID original da geometria que intersectou
                     geometry='geom',
                     crs='EPSG:4674')
+                    #Cria indice
+ 
+            self.spatial_index = STRtree(self.gdf_input_intersection.geom)
+
         except Exception as e:
             logging.error(f'Função _intersect na iteração {self.n_grid} deu o problema {e}')
 
@@ -138,9 +151,64 @@ class Splitter:
         return f'{elapsed_time:.2f}'
 
 
+    def _intersection_sql(self, n_grid, grid_gdf, engine):
+        """
+        Realiza uma consulta SQL para selecionar geometrias que intersectam a unidade_split.
+        
+        Args:
+            engine de conexão com o banco. acompanhada do schema "car.car_mv"
+            table_name (str): Nome da tabela no banco de dados na qual será feito o intersect.
+            geom_column (str): Nome da coluna geométrica na tabela.
+        
+        Returns:
+            geopandas.GeoDataFrame: DataFrame com as geometrias resultantes da consulta.
+        """
+        #Unidade split
+        self.n_grid = n_grid
+        self.unidade_split = grid_gdf[grid_gdf["grid_id"] == self.n_grid].geometry.values[0]
+
+        # Garantir que unidade_split está definida
+        if not hasattr(self, "unidade_split"):
+            self.logger.error("unidade_split não está definida.")
+            raise ValueError("unidade_split precisa estar definida antes de chamar intersection_sql.")
+        
+        # Extrair os bounds da unidade_split
+        bounds = self.unidade_split.bounds  # (minx, miny, maxx, maxy)
+        minx, miny, maxx, maxy = bounds
+        
+        # Criar a query SQL
+        query = f"""
+        SELECT gid id, 'CAR' id_layer, geom
+        FROM {self.split_table_name}
+        WHERE geom && ST_MakeEnvelope({minx}, {miny}, {maxx}, {maxy}, 4674
+        );
+        """
+        
+        # Conectar ao banco de dados
+        try:      
+               
+            # Executar a consulta e carregar os dados como GeoDataFrame
+            result_gdf = gpd.read_postgis(query, con=engine, geom_col='geom')
+
+            # Criar o GeoDataFrame final no formato desejado
+            self.gdf_input_intersection = gpd.GeoDataFrame(data={
+                    'id': result_gdf['id'],
+                    'id_layer': result_gdf['id_layer'],
+                    'geom': result_gdf.geom},
+                geometry='geom',
+                crs='EPSG:4674'
+            )
+            self.spatial_index = STRtree(self.gdf_input_intersection.geom)
+            
+            return True
+        except Exception as e:
+            self.logger.error(f"Erro ao executar consulta SQL: {e}")
+            raise
 
 
-    def intersection(self, n_grid, data, grid_gdf):
+
+
+    def deprecated_intersection(self, n_grid, data, grid_gdf):
             
         self.n_grid = n_grid
 
@@ -246,9 +314,56 @@ class Splitter:
 
 
 
+    def _process_overlap_row(self, row):
+        """
+        Processa uma única linha do GeoDataFrame para encontrar os polígonos mais próximos.
+        :param row: Linha do GeoDataFrame.
+        :return: Tupla com índice, id_layers e id_features.
+        """
+  
+        idx, shard_data = row.name, row
+
+        glass_shard_point = shard_data["representative_point"]
+
+        nearest_index = self.spatial_index.query_nearest(glass_shard_point)
+
+        nearest_polygon = self.gdf_input_intersection.iloc[nearest_index]
 
 
-    def calculate_overlapping(self):
+        if not nearest_polygon.empty:
+            id_layers = ['GRID'] + nearest_polygon["id_layer"].tolist()
+            id_features = [self.n_grid] + nearest_polygon["id"].tolist()
+        else:
+            id_layers = ['GRID']
+            id_features = [self.n_grid]
+
+        return idx, id_layers, id_features
+    
+
+    def process_overlapping(self):
+        """
+        Processa todos os fragmentos de vidro sequencialmente.
+        Atualiza as colunas 'id_layer' e 'id_feature' no GeoDataFrame.
+        """
+
+        # Adiciona a coluna representative_point se ainda não existir
+        if "representative_point" not in self.gdf_broken_glass.columns:
+            self.gdf_broken_glass["representative_point"] = self.gdf_broken_glass.geometry.apply(lambda x: x.representative_point())
+  
+        # Processa cada linha sequencialmente
+        results = self.gdf_broken_glass.apply(self._process_overlap_row, axis=1)
+    
+        # Atualiza o GeoDataFrame com os resultados
+        self.gdf_broken_glass["id_layer"] = results.apply(lambda x: x[1])
+        self.gdf_broken_glass["id_feature"] = results.apply(lambda x: x[2])
+
+        # Remove a coluna de ponto representativo, se não for mais necessária
+        self.gdf_broken_glass.drop(columns="representative_point", inplace=True, errors='ignore')
+
+    
+    
+    
+    def deprecated_calculate_overlapping(self):
         # Inicia o cronômetro para a operação
         start_time = time.time()
         try:
@@ -321,14 +436,21 @@ class Splitter:
         return f'{elapsed_time:.2f}'
 
 
-    def run(self, n_grid, data, grid_gdf):
+    def run(self, n_grid, grid_gdf):
         # Função que processa cada grid específico
         start_time=time.time()
         try:
-            intersection_time=self._intersection(n_grid, data, grid_gdf)
+
+            # Criar o engine dentro de cada processo
+            engine = create_engine(
+                f"postgresql://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
+            )
+
+
+            intersection_time=self._intersection_sql(n_grid=n_grid, grid_gdf=grid_gdf, engine=engine)
             prepare_lines_time=self.prepare_split_line()
             perform_split_time=self.perform_split()
-            overlapping_time=self.calculate_overlapping()
+            overlapping_time=self.process_overlapping()
             save_time=self.save_results()
             elapsed_time=time.time()-start_time
             tempos={'intersection_time':intersection_time,
@@ -337,7 +459,12 @@ class Splitter:
                     'overlapping_time':overlapping_time,
                     'save_time':save_time}
             # Encontrar o maior tempo e a chave correspondente
-            max_time_func, max_time_value = max(tempos.items(), key=lambda item: item[1])
+            # Tratar valores None e converter para float
+            tempos_cleaned = {k: float(v) if v is not None else 0.0 for k, v in tempos.items()}
+
+            # Encontrar o maior tempo e a chave correspondente
+            max_time_func, max_time_value = max(tempos_cleaned.items(), key=lambda item: item[1])
+            engine.dispose()
             logging.info(f'Iteração completa para o {n_grid} levou {elapsed_time:.2f} e a operação que levou mais tempo foi a funcao {max_time_func} com {max_time_value} e descartou {self.counter} feicoes')
         #Se der erro prossegue 
         except Exception as e:
@@ -347,10 +474,8 @@ class Splitter:
             self.logger.error(f"Iteração do grid {self.n_grid} ERRO {e}")
             
         
-
-
-    def run_parallel(self, data, grids,grid_gdf):
-        run_splitter_partial = partial(self.run, data=data,grid_gdf=grid_gdf)
+    def run_parallel(self, grids, grid_gdf):
+        run_splitter_partial = partial(self.run, grid_gdf=grid_gdf)
         # Função para execução paralela
         with Pool(processes=self.num_processes) as pool:
             pool.map(run_splitter_partial, grids)

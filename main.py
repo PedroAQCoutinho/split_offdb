@@ -73,10 +73,10 @@ if __name__ == "__main__":
     # Skip prepare ?
     skip_prepare_inputs = config["skip_prepare_inputs"]
 
-
+    dataprocessor = DataProcessor() #usar grid spacing default
+    engine=dataprocessor.engine
     if not skip_prepare_inputs:
-        # Executa o DataProcessor com o grid_spacing atual
-        dataprocessor = DataProcessor() #usar grid spacing default
+        # Executa o DataProcessor com o grid_spacing atual      
         dataprocessor.run()
     else:
         print('Skipping prepare_inputs.py')
@@ -86,14 +86,14 @@ if __name__ == "__main__":
     #Lista de grids para iteração baseado no grid file gerado
     grids = gpd.read_parquet(config["grid_file"])["grid_id"].tolist()      
     #Carregar camada para split
-    data = load_input(config["input_file"])
+    #data = load_input(config["input_file"])
 
     #Carregar o grid
     grid_gdf = gpd.read_parquet(config["grid_file"])
 
     #Roda o código aqui !!!!!!!!!!
-    splitter = Splitter(data, config_path='config.json')
-    splitter.run_parallel(data=data, grids=grids, grid_gdf=grid_gdf)
+    splitter = Splitter(config_path='config.json')
+    splitter.run_parallel(grids=grids, grid_gdf=grid_gdf)
 
     # Executa o multiprocessing com a lista de grids
     logger.info("Iniciando multiprocessing para grids")
