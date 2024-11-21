@@ -15,6 +15,7 @@ import psutil
 from shapely.strtree import STRtree
 from sqlalchemy import create_engine
 from dotenv import load_dotenv
+from uploader import upload_parquet, upload_full_folder
 
 
 def load_input(input_file):
@@ -47,6 +48,7 @@ class Splitter:
         self.input_file = config["input_file"]
         self.output_path = config["output_path"]
         self.num_processes = config["num_processes"]
+        self.arquivo_final = config["arquivos_final"]
         self.split_table_name = config["split_table_name"]
         self.memory = psutil.virtual_memory()
 
@@ -451,13 +453,17 @@ class Splitter:
             prepare_lines_time=self.prepare_split_line()
             perform_split_time=self.perform_split()
             overlapping_time=self.process_overlapping()
-            save_time=self.save_results()
+            #save_time=self.save_results()
+            save_time=0
+            upload_time=upload_parquet(engine=engine, gdf=self.gdf_broken_glass, table_name=self.arquivo_final)
             elapsed_time=time.time()-start_time
+            
             tempos={'intersection_time':intersection_time,
                     'prepare_lines_time':prepare_lines_time,
                     'perform_split_time':perform_split_time,
                     'overlapping_time':overlapping_time,
-                    'save_time':save_time}
+                    'save_time':save_time,
+                    'upload_sql_time':upload_time}
             # Encontrar o maior tempo e a chave correspondente
             # Tratar valores None e converter para float
             tempos_cleaned = {k: float(v) if v is not None else 0.0 for k, v in tempos.items()}
