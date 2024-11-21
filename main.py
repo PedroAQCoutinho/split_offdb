@@ -69,19 +69,33 @@ if __name__ == "__main__":
 
 
     #Funcao para formatar array
-    create_query=f"CREATE SCHEMA IF NOTE EXISTS split;CREATE TABLE IF NOT EXISTS split.{config['arquivos_final']} (id integer, id_layer text[], id_feature integer[], geometry geometry(polygon, 4674))"
+    create_query=f"CREATE SCHEMA IF NOT EXISTS split;DROP TABLE IF EXISTS split.{config['arquivos_final']} ;CREATE TABLE IF NOT EXISTS split.{config['arquivos_final']} (gid serial, id_layer text[], id_feature integer[], geometry geometry(polygon, 4674))"
     with engine.connect() as conn:
         with conn.begin():
             r=conn.execute(text(create_query))
 
     #Roda o código aqui !!!!!!!!!!
+    logger.info("Iniciando multiprocessing para grids")
     splitter = Splitter(config_path='config.json')
     splitter.run_parallel(grids=grids, grid_gdf=grid_gdf)
 
-    # Executa o multiprocessing com a lista de grids
-    logger.info("Iniciando multiprocessing para grids")
-    #Paralelismo baseado em multiprocessing
 
+
+    #Cria indices no banco
+    queries_index = [
+        f"create index if not exists idx_{config['arquivos_final']}_gid on split.{config['arquivos_final']} (gid);",
+        f"create index if not exists idx_{config['arquivos_final']}_id_layer on split.{config['arquivos_final']} (id_layer);",
+        f"create index if not exists idx_{config['arquivos_final']}_geom on split.{config['arquivos_final']} using gist (geometry);",
+        f"create index if not exists idx_{config['arquivos_final']}_id_feature on split.{config['arquivos_final']} (id_feature);"
+    ]
+
+
+
+    with engine.connect() as conn:
+        for q in queries_index:
+            print(q)
+            with conn.begin():
+                r=conn.execute(text(q))
 
     # Calcula o tempo decorrido para o grid_spacing atual
     elapsed_time = time.time() - start_time

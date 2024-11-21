@@ -15,7 +15,7 @@ import psutil
 from shapely.strtree import STRtree
 from sqlalchemy import create_engine
 from dotenv import load_dotenv
-from uploader import upload_parquet, upload_full_folder
+
 
 
 def load_input(input_file):
@@ -47,6 +47,7 @@ class Splitter:
         self.grid_file = config["grid_file"]
         self.input_file = config["input_file"]
         self.output_path = config["output_path"]
+        self.schema = config["schema"]
         self.num_processes = config["num_processes"]
         self.arquivo_final = config["arquivos_final"]
         self.split_table_name = config["split_table_name"]
@@ -76,9 +77,6 @@ class Splitter:
 
 
   
-
-
-
     def _intersection(self, n_grid, data, grid_gdf):
         start_time=time.time()
         self.n_grid = n_grid
@@ -165,6 +163,7 @@ class Splitter:
         Returns:
             geopandas.GeoDataFrame: DataFrame com as geometrias resultantes da consulta.
         """
+        start_time=time.time()
         #Unidade split
         self.n_grid = n_grid
         self.unidade_split = grid_gdf[grid_gdf["grid_id"] == self.n_grid].geometry.values[0]
@@ -180,7 +179,7 @@ class Splitter:
         
         # Criar a query SQL
         query = f"""
-        SELECT gid id, 'CAR' id_layer, geom
+        SELECT id, id_layer, geom
         FROM {self.split_table_name}
         WHERE geom && ST_MakeEnvelope({minx}, {miny}, {maxx}, {maxy}, 4674
         );
@@ -202,7 +201,8 @@ class Splitter:
             )
             self.spatial_index = STRtree(self.gdf_input_intersection.geom)
             
-            return True
+            elapsed_time=time.time()-start_time
+            return f'{elapsed_time:.2f}'
         except Exception as e:
             self.logger.error(f"Erro ao executar consulta SQL: {e}")
             raise
@@ -347,7 +347,7 @@ class Splitter:
         Processa todos os fragmentos de vidro sequencialmente.
         Atualiza as colunas 'id_layer' e 'id_feature' no GeoDataFrame.
         """
-
+        start_time=time.time()
         # Adiciona a coluna representative_point se ainda não existir
         if "representative_point" not in self.gdf_broken_glass.columns:
             self.gdf_broken_glass["representative_point"] = self.gdf_broken_glass.geometry.apply(lambda x: x.representative_point())
@@ -361,6 +361,8 @@ class Splitter:
 
         # Remove a coluna de ponto representativo, se não for mais necessária
         self.gdf_broken_glass.drop(columns="representative_point", inplace=True, errors='ignore')
+        elapsed_time=time.time()-start_time
+        return f'{elapsed_time:.2f}'
 
     
     
@@ -422,6 +424,36 @@ class Splitter:
         elapsed_time = time.time() - start_time
         return f'{elapsed_time:.2f}'
 
+    def format_array(self, column):
+        """
+        Converte valores de uma coluna para o formato de array do PostgreSQL. Checa se é uma lista, pois existem None que retornarão como None
+        """
+        return column.apply(lambda x: '{' + ','.join(map(str, x)) + '}')
+
+
+    def upload_parquet(self, engine):
+        memory = psutil.virtual_memory()
+        cpu_percent = psutil.cpu_percent(interval=0.1)
+  
+        start_time = time.time()
+        #Dropa a coluna id pois o id sequencial é criado dentro de cada bloco, no entando no banco existirá a coluna gid serial
+        self.gdf_broken_glass.drop(columns='id', inplace=True)
+        #Seleciona em ordem
+        self.gdf_broken_glass=self.gdf_broken_glass[['id_layer', 'id_feature', 'geometry']]
+        # Aplicando a função para transformar lista em string exemplo '{CAR, CAR, GRID}' que é interpretada como array no banco
+        self.gdf_broken_glass['id_layer'] = self.format_array(self.gdf_broken_glass['id_layer'])
+        self.gdf_broken_glass['id_feature'] = self.format_array(self.gdf_broken_glass['id_feature'])
+        self.gdf_broken_glass.to_postgis(
+            name=self.arquivo_final,
+            con=engine,
+            schema=self.schema,
+            if_exists="append",
+            index=False
+        )
+        self.logger.info(f"Iteração do grid {self.n_grid} armazenada - Uso de memória : {memory.percent}% - CPU : {cpu_percent}%")
+        del self.gdf_broken_glass
+        elapsed_time=time.time()-start_time
+        return f'{elapsed_time:.2f}'
 
 
     def save_results(self):
@@ -430,7 +462,7 @@ class Splitter:
         cpu_percent = psutil.cpu_percent(interval=0.1)
         # Salvar resultados em GeoJSON e Parquet
         #self.gdf_broken_glass.to_file(os.path.join(self.output_path, f'split_{self.n_grid}.geojson'), driver="GeoJSON")
-        self.gdf_broken_glass.to_parquet(os.path.join(self.output_path, f'split_{self.n_grid}.parquet'))
+        self.gdf_broken_glass.to_parquet(os.path.join(self.output_path, f'{self.arquivo_final}_{self.n_grid}.parquet'))
         self.logger.info(f"Iteração do grid {self.n_grid} armazenada - Uso de memória : {memory.percent}% - CPU : {cpu_percent}%")
         
         del self.gdf_broken_glass
@@ -454,15 +486,13 @@ class Splitter:
             perform_split_time=self.perform_split()
             overlapping_time=self.process_overlapping()
             #save_time=self.save_results()
-            save_time=0
-            upload_time=upload_parquet(engine=engine, gdf=self.gdf_broken_glass, table_name=self.arquivo_final)
+            upload_time=self.upload_parquet(engine=engine) #Inserir isso como método na classe
             elapsed_time=time.time()-start_time
             
             tempos={'intersection_time':intersection_time,
                     'prepare_lines_time':prepare_lines_time,
                     'perform_split_time':perform_split_time,
                     'overlapping_time':overlapping_time,
-                    'save_time':save_time,
                     'upload_sql_time':upload_time}
             # Encontrar o maior tempo e a chave correspondente
             # Tratar valores None e converter para float
@@ -472,6 +502,7 @@ class Splitter:
             max_time_func, max_time_value = max(tempos_cleaned.items(), key=lambda item: item[1])
             engine.dispose()
             logging.info(f'Iteração completa para o {n_grid} levou {elapsed_time:.2f} e a operação que levou mais tempo foi a funcao {max_time_func} com {max_time_value} e descartou {self.counter} feicoes')
+            logging.info(f'Tempos: {tempos}')        
         #Se der erro prossegue 
         except Exception as e:
             # Registra o n_grid no arquivo de erro

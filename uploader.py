@@ -10,7 +10,8 @@ import time
 
 def upload_parquet(engine, gdf, table_name):
     start_time = time.time()
-    gdf=gdf[['id', 'id_layer', 'id_feature', 'geometry']]
+    gdf.drop(columns='id', inplace=True)
+    gdf=gdf[['id_layer', 'id_feature', 'geometry']]
     # Aplicando a função
     gdf['id_layer'] = format_array(gdf['id_layer'])
     gdf['id_feature'] = format_array(gdf['id_feature'])
