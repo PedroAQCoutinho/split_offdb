@@ -13,8 +13,10 @@ import numpy as np
 from rtree import index
 import psutil
 from shapely.strtree import STRtree
-from sqlalchemy import create_engine
+from sqlalchemy import text, create_engine
 from dotenv import load_dotenv
+from sqlalchemy import Table, MetaData, Index
+
 
 
 
@@ -34,10 +36,7 @@ class Splitter:
         self.db_password = os.getenv("DB_PASSWORD")
         self.db_host = os.getenv("DB_HOST")
         self.db_port = os.getenv("DB_PORT")
-        self.db_name = os.getenv("DB_NAME")
-
-
- 
+        self.db_name = os.getenv("DB_NAME") 
 
         # Carregar configuração do arquivo JSON
         with open(config_path, "r") as f:
@@ -60,97 +59,34 @@ class Splitter:
         
         #Logger
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.logger.setLevel(logging.DEBUG)        
-        #self.logger.propagate = False  # Evita que os logs do splitter apareçam em main.log
-        
+        self.logger.setLevel(logging.DEBUG)                
         # Configuração básica de saída para o console
         file_handler = logging.FileHandler('logs/splitter.log', mode='w', encoding='utf-8')
-
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         file_handler.setFormatter(formatter)
-        
         # Adiciona o handler ao logger
         if not self.logger.hasHandlers():  # Evita duplicação de handlers
             self.logger.addHandler(file_handler)
 
-        self.logger.info(f"Splitter initialized with grid_path: {self.grid_file} AND input_path: {self.input_file}")
+        # Dicionário com zonas UTM e seus respectivos códigos EPSG (apenas para o Brasil)
+        self.utm_epsg_brazil = {
+            18: 32718,  # UTM Zona 18S
+            19: 32719,  # UTM Zona 19S
+            20: 32720,  # UTM Zona 20S
+            21: 32721,  # UTM Zona 21S
+            22: 32722,  # UTM Zona 22S
+            23: 32723,  # UTM Zona 23S
+            24: 32724,  # UTM Zona 24S
+            25: 32725   # UTM Zona 25S
+        }
 
 
-  
-    def _intersection(self, n_grid, data, grid_gdf):
-        start_time=time.time()
-        self.n_grid = n_grid
 
-        try:
-            # Verificar se grid_gdf e input_gdf estão carregados
-            if grid_gdf is None or data is None:
-                self.logger.error("grid_gdf ou input_gdf nao estao carregados.")
-                raise ValueError("grid_gdf e input_gdf devem estar carregados antes de chamar intersection.")
-            
-            if grid_gdf.empty or data.empty:
-                self.logger.error("grid_gdf ou input_gdf estao vazios.")
-                raise ValueError("grid_gdf e input_gdf não podem estar vazios.")
+        self.logger.info(f"Splitter instanciado com sucesso")
 
-            # Seleciona a unidade específica no grid e aplica índice espacial para otimizar a interseção
-            self.unidade_split = grid_gdf[grid_gdf["grid_id"] == self.n_grid].geometry.values[0]
+
+
     
-            
-
-
-            # Filtra apenas as geometrias que têm bbox sobrepondo `unidade_split`
-            possible_matches_index = list(self.input_sindex.intersection(self.unidade_split.bounds))
-            possible_matches = data.iloc[possible_matches_index]
-
-            
-
-            # Calcula as interseções reais e armazena apenas as interseções não vazias
-            intersections=[]
-            intersecting_ids=[]
-            intersecting_id_layers=[]
-            # Itera sobre as geometrias
-            for index, row in possible_matches.iterrows():
-                geom=row.geom
-                if isinstance(geom, Polygon):
-                    geom=geom
-                elif isinstance(geom, MultiPolygon):
-                    geom=geom.geoms[0]
-
-                if geom.is_valid:
-                    intersection = self.unidade_split.intersection(geom)
-                    if isinstance(intersection, Polygon):
-                        intersection=intersection
-                    elif isinstance(intersection, MultiPolygon):
-                        intersection=intersection.geoms[0]
-                else:
-                    #pula para o proximo loop, de modo a eliminar geometria inválida
-                    continue
-
-
-                # Checa se a interseção é válida e não está vazia
-                if not intersection.is_empty and intersection.is_valid:
-                    intersections.append(intersection)
-                    intersecting_ids.append(row['id'])  # Armazena o 'id' da geometria original
-                    intersecting_id_layers.append(row['id_layer'])
-                else:
-                    #Continue para o próximo loop, descartando geometria inválida
-                    continue
-
-            # Cria um novo GeoDataFrame com as interseções reais
-            self.gdf_input_intersection = gpd.GeoDataFrame(
-                    data={'id': intersecting_ids, 'id_layer': intersecting_id_layers, 'geom': intersections},  # Inclui o ID original da geometria que intersectou
-                    geometry='geom',
-                    crs='EPSG:4674')
-                    #Cria indice
- 
-            self.spatial_index = STRtree(self.gdf_input_intersection.geom)
-
-        except Exception as e:
-            logging.error(f'Função _intersect na iteração {self.n_grid} deu o problema {e}')
-
-        elapsed_time=time.time()-start_time
-        return f'{elapsed_time:.2f}'
-
-
     def _intersection_sql(self, n_grid, grid_gdf, engine):
         """
         Realiza uma consulta SQL para selecionar geometrias que intersectam a unidade_split.
@@ -166,7 +102,7 @@ class Splitter:
         start_time=time.time()
         #Unidade split
         self.n_grid = n_grid
-        self.unidade_split = grid_gdf[grid_gdf["grid_id"] == self.n_grid].geometry.values[0]
+        self.unidade_split = grid_gdf[grid_gdf["id"] == self.n_grid].geometry.values[0]
 
         # Garantir que unidade_split está definida
         if not hasattr(self, "unidade_split"):
@@ -206,40 +142,7 @@ class Splitter:
         except Exception as e:
             self.logger.error(f"Erro ao executar consulta SQL: {e}")
             raise
-
-
-
-
-    def deprecated_intersection(self, n_grid, data, grid_gdf):
-            
-        self.n_grid = n_grid
-
-        # Verificar se grid_gdf e input_gdf estão carregados
-        if grid_gdf is None or data is None:
-            self.logger.error("grid_gdf ou input_gdf nao estao carregados.")
-            raise ValueError("grid_gdf e input_gdf devem estar carregados antes de chamar intersection.")
-        
-        if grid_gdf.empty or data.empty:
-            self.logger.error("grid_gdf ou input_gdf estao vazios.")
-            raise ValueError("grid_gdf e input_gdf não podem estar vazios.")
-
-        # Seleciona a unidade específica no grid e aplica índice espacial para otimizar a interseção
-        self.unidade_split = grid_gdf[grid_gdf["grid_id"] == self.n_grid].geometry.values[0]
-        
-        # Cria um índice espacial para `input_gdf`
-        #self.input_sindex = data.sindex
-
-        # Filtra apenas as geometrias que têm bbox sobrepondo `unidade_split`
-        possible_matches_index = list(self.input_sindex.intersection(self.unidade_split.bounds))
-        possible_matches = data.iloc[possible_matches_index]
-
-        # Filtra apenas as interseções reais
-        self.gdf_input_intersection = possible_matches[possible_matches.intersects(self.unidade_split)]
-
-        #self.logger.info(f'Seleção dos polígonos para split realizada com sucesso, total de {len(self.gdf_input_intersection)} polígonos')
-        return self.gdf_input_intersection
-        
-    
+  
     def prepare_split_line(self):
         self.counter=0
         start_time=time.time()
@@ -302,7 +205,7 @@ class Splitter:
                 if poly.representative_point().intersects(self.unidade_split)
             ]
             
-            del self.unidade_split
+            
             self.gdf_broken_glass = gpd.GeoDataFrame(data={"id": range(1, len(filtered_polygons) + 1)}, 
                                                     geometry=filtered_polygons, crs="EPSG:4674")
             #elapsed_time = time.time() - operation_start
@@ -313,8 +216,6 @@ class Splitter:
 
         elapsed_time=time.time()-start_time
         return f'{elapsed_time:.2f}'
-
-
 
     def _process_overlap_row(self, row):
         """
@@ -331,17 +232,25 @@ class Splitter:
 
         nearest_polygon = self.gdf_input_intersection.iloc[nearest_index]
 
+        nearest_polygon.reset_index(drop=False, inplace = True)
 
-        if not nearest_polygon.empty:
-            id_layers = ['GRID'] + nearest_polygon["id_layer"].tolist()
-            id_features = [self.n_grid] + nearest_polygon["id"].tolist()
+        idx_true_intersection = []
+        #Etapa de maior ineficiencia.
+        for idx, row in nearest_polygon.iterrows():
+            if row.geom.intersects(glass_shard_point):
+                idx_true_intersection.append(idx)
+
+        true_intersection = nearest_polygon.iloc[idx_true_intersection]        
+
+        if not true_intersection.empty:
+            id_layers = ['GRID'] + true_intersection["id_layer"].tolist()
+            id_features = [self.n_grid] + true_intersection["id"].tolist()
         else:
             id_layers = ['GRID']
             id_features = [self.n_grid]
 
         return idx, id_layers, id_features
     
-
     def process_overlapping(self):
         """
         Processa todos os fragmentos de vidro sequencialmente.
@@ -364,85 +273,142 @@ class Splitter:
         elapsed_time=time.time()-start_time
         return f'{elapsed_time:.2f}'
 
-    
-    
-    
-    def deprecated_calculate_overlapping(self):
-        # Inicia o cronômetro para a operação
-        start_time = time.time()
+    def colunas_boleanas(self, engine):
+        """
+        Pega colunas booleanas da tabela de input
+        """
         try:
-            # Calcular ponto representativo para cada geometria
-            self.gdf_broken_glass["representative_point"] = self.gdf_broken_glass.geometry.apply(lambda x: x.representative_point())
+            query=f'select distinct id_layer from {self.split_table_name};'
+            df=pd.read_sql_query(query,con=engine)
+            boleanas=[i for i in df.id_layer]
+            logging.info(f"Colunas booleanas capturadas com sucesso ({boleanas})")
+        except Exception as e:
+            logging.error(f'Erro na cpatura das colunas boleanas, não é possivel continuar. ({e})')
+            raise
 
-            # Inicializa listas para armazenar os `id_layer` e `id_feature`
-            id_layers_list = []
-            id_features_list = []
+        return boleanas
 
-            # Cria um índice espacial para os polígonos em gdf_input_intersection
-            spatial_index = index.Index()
-            for idx, poly in self.gdf_input_intersection.iterrows(): 
-                geom=poly.geom
-                spatial_index.insert(idx, geom.bounds)
+    def create_table_postgresql(self, engine):
+        """
+        Cria a tabela no banco de dados. Se não conseguir criar, raise !
+        """
+        try:
+            self.boleanas = self.colunas_boleanas(engine=engine)
+            create_query=[f"CREATE SCHEMA IF NOT EXISTS split;",
+                      f"DROP TABLE IF EXISTS split.{self.arquivo_final};"]
+        
+            tabela = f"CREATE TABLE IF NOT EXISTS split.{self.arquivo_final} (gid serial, id_layer text[], id_feature integer[], cd_mun integer, cd_uf integer, n_car INTEGER, " + ", ".join([f"is_{x} BOOLEAN" for x in self.boleanas]) + ", area_ha NUMERIC, geometry geometry(polygon, 4674));"
+            create_query.append(tabela)
 
-            # Itera sobre cada fragmento de vidro
-            for idx, shard in self.gdf_broken_glass.iterrows():
-                glass_shard_point = shard["representative_point"]
 
-                # Encontra os índices dos polígonos candidatos usando o índice espacial
-                possible_matches_index = list(spatial_index.intersection(glass_shard_point.bounds))
-                possible_matches = self.gdf_input_intersection.iloc[possible_matches_index]
+            with engine.connect() as conn:
+                logging.info(f"Criando tabela ({self.arquivo_final}) de saída")
+                for q in create_query:
+                    with conn.begin():
+                        conn.execute(text(q))
 
-                # Filtra os polígonos que realmente contêm o ponto representativo
-                overlapping_polygons = possible_matches[possible_matches.contains(glass_shard_point)]
-
-                # Define id_layers e id_features para cada caso
-                if not overlapping_polygons.empty:
-                    id_layers = ['GRID'] + overlapping_polygons["id_layer"].tolist()
-                    id_features = [self.n_grid] + overlapping_polygons["id"].tolist()
-                else:
-                    id_layers = ['GRID']
-                    id_features = [self.n_grid]
-
-                # Armazena as listas para cada fragmento
-                id_layers_list.append(id_layers)
-                id_features_list.append(id_features)
-
-            # Remove a coluna de ponto representativo
-            self.gdf_broken_glass.drop(columns="representative_point", inplace=True)
-
-            # Adiciona as listas como novas colunas no gdf_broken_glass
-            self.gdf_broken_glass["id_layer"] = id_layers_list
-            self.gdf_broken_glass["id_feature"] = id_features_list
+            logging.info(f"Tabela {self.arquivo_final} criada com sucesso")
 
         except Exception as e:
-            logging.error(f'Função calculate_overlapping na iteração {getattr(self, "n_grid", "N/A")} deu o problema {e}')
+            logging.error(f"Erro na criação da tabela {self.arquivo_final}, interrompendo processo.")
 
-        # Limpa o gdf_input_intersection da memória
-        del self.gdf_input_intersection
+            raise
 
-        # Log do tempo total de operação
-        elapsed_time = time.time() - start_time
+
+
+        return None
+
+    def create_indices(self, engine):
+        """
+        Cria índices em todas as colunas da tabela self.arquivo_final.
+        Utiliza GIST para colunas de geometria.
+        """
+    
+
+        tabela = f"split.{self.arquivo_final}"
+        colunas = ["cd_mun", "cd_uf", "n_car", "area_ha"] + [f"is_{x}" for x in self.boleanas]
+
+        with engine.connect() as conn:
+            for coluna in colunas:
+                idx = f"CREATE INDEX idx_{coluna} ON {tabela} ({coluna});"                
+                with conn.begin():
+                    logging.info(idx)
+                    conn.execute(text(idx))
+  
+        
+        # Índice GIST para geometria
+        idx_geometry = f"CREATE INDEX idx_geometry_gist ON {tabela} USING GIST (geometry);"
+        with engine.connect() as conn:
+            with conn.begin():
+                logging.info(idx_geometry)
+                conn.execute(text(idx_geometry))
+
+        return None
+
+
+
+    def format_gdf_broken_glass(self, drop_only_grid=True):
+        """
+        Essa funcao precisa ser melhor pensada, pois aqui é o momento de facilitar as queries. Então, em cada rodada é bom poder manipular livremente a saída
+        Formata o gdf broken glass, operações:
+        1. Dropa coluna ID
+        2. Formata os campos id_layer e id_feature para adequação ao db
+        3. Cria colunas booleanas e testa o campo id_layer para presenca da camada, retornando true ou false.
+        4. Calcula área das feicoes, apenas se drop_only_grid = True (default). Se for falso, mantem as feicoes id_layer=['GRID']
+        5. (TESTE) Incluir coluna com cd_uf e cd_mun  
+        """
+        start_time=time.time()
+        try:
+
+            #1. Dropa a coluna id pois o id sequencial é criado dentro de cada bloco, no entando no banco existirá a coluna gid serial
+            self.gdf_broken_glass.drop(columns='id', inplace=True)
+            #5. Dropar registros em que há apenas a classe 'GRID' no id_layer
+            if drop_only_grid:
+                self.gdf_broken_glass = self.gdf_broken_glass[self.gdf_broken_glass['id_layer'].apply(lambda x: 'MUN' in x)]
+            
+            # Inserir coluna cd_mun
+            self.gdf_broken_glass['cd_mun'] = self.gdf_broken_glass.apply(lambda row: row['id_feature'][row['id_layer'].index('MUN')], axis=1)
+            #Inserir coluna cd_uf e cd_mun
+            self.gdf_broken_glass['cd_uf'] = self.gdf_broken_glass['cd_mun'].astype(str).str[:2].astype(int)
+            #Contagem de CARs
+            self.gdf_broken_glass['n_car'] = np.array([x.count('CAR') for x in self.gdf_broken_glass['id_layer']])
+
+            #2. Aplicando a função para transformar lista em string exemplo '{CAR, CAR, GRID}' que é interpretada como array no banco
+            self.gdf_broken_glass['id_layer'] = self.gdf_broken_glass['id_layer'].apply(lambda x: '{' + ','.join(map(str, x)) + '}')
+            self.gdf_broken_glass['id_feature'] = self.gdf_broken_glass['id_feature'].apply(lambda x: '{' + ','.join(map(str, x)) + '}')
+            #3. Cria colunas boleanas
+            for coluna in self.boleanas:
+                self.gdf_broken_glass[f'is_{coluna.lower()}']=self.gdf_broken_glass['id_layer'].apply(lambda x: f'{coluna}' in x)
+            #4. Calcula área das feicoes. Para isso é necessario descobrir a zona do grid e reprojar e dado de acordo com a feicao
+            xmin, ymin, xmax, ymax = self.unidade_split.bounds
+            longitude_media_grid=(xmin + xmax) / 2
+            zona = int((longitude_media_grid + 180) / 6) + 1
+            projecao = self.utm_epsg_brazil[zona]
+            gdf_proj = self.gdf_broken_glass.to_crs(epsg=projecao)
+            gdf_proj['area_ha'] = gdf_proj.geometry.area/10000
+            self.gdf_broken_glass['area_ha']=gdf_proj['area_ha']
+            
+
+            
+
+
+
+            del gdf_proj
+            del self.unidade_split
+
+        except Exception as e:
+            logging.error(f"Erro na formatação do output, não é possivel continuar ({e})")
+            
+
+        elapsed_time=time.time()-start_time
         return f'{elapsed_time:.2f}'
-
-    def format_array(self, column):
-        """
-        Converte valores de uma coluna para o formato de array do PostgreSQL. Checa se é uma lista, pois existem None que retornarão como None
-        """
-        return column.apply(lambda x: '{' + ','.join(map(str, x)) + '}')
-
 
     def upload_parquet(self, engine):
         memory = psutil.virtual_memory()
-        cpu_percent = psutil.cpu_percent(interval=0.1)
-  
-        start_time = time.time()
-        #Dropa a coluna id pois o id sequencial é criado dentro de cada bloco, no entando no banco existirá a coluna gid serial
-        self.gdf_broken_glass.drop(columns='id', inplace=True)
-        #Seleciona em ordem
-        self.gdf_broken_glass=self.gdf_broken_glass[['id_layer', 'id_feature', 'geometry']]
-        # Aplicando a função para transformar lista em string exemplo '{CAR, CAR, GRID}' que é interpretada como array no banco
-        self.gdf_broken_glass['id_layer'] = self.format_array(self.gdf_broken_glass['id_layer'])
-        self.gdf_broken_glass['id_feature'] = self.format_array(self.gdf_broken_glass['id_feature'])
+        cpu_percent = psutil.cpu_percent(interval=0.1)  
+        start_time = time.time()         
+        
+        #Upload direto no db
         self.gdf_broken_glass.to_postgis(
             name=self.arquivo_final,
             con=engine,
@@ -450,25 +416,11 @@ class Splitter:
             if_exists="append",
             index=False
         )
+
         self.logger.info(f"Iteração do grid {self.n_grid} armazenada - Uso de memória : {memory.percent}% - CPU : {cpu_percent}%")
         del self.gdf_broken_glass
         elapsed_time=time.time()-start_time
         return f'{elapsed_time:.2f}'
-
-
-    def save_results(self):
-        start_time=time.time()
-        memory = psutil.virtual_memory()
-        cpu_percent = psutil.cpu_percent(interval=0.1)
-        # Salvar resultados em GeoJSON e Parquet
-        #self.gdf_broken_glass.to_file(os.path.join(self.output_path, f'split_{self.n_grid}.geojson'), driver="GeoJSON")
-        self.gdf_broken_glass.to_parquet(os.path.join(self.output_path, f'{self.arquivo_final}_{self.n_grid}.parquet'))
-        self.logger.info(f"Iteração do grid {self.n_grid} armazenada - Uso de memória : {memory.percent}% - CPU : {cpu_percent}%")
-        
-        del self.gdf_broken_glass
-        elapsed_time=time.time()-start_time
-        return f'{elapsed_time:.2f}'
-
 
     def run(self, n_grid, grid_gdf):
         # Função que processa cada grid específico
@@ -485,7 +437,7 @@ class Splitter:
             prepare_lines_time=self.prepare_split_line()
             perform_split_time=self.perform_split()
             overlapping_time=self.process_overlapping()
-            #save_time=self.save_results()
+            format_gdf=self.format_gdf_broken_glass()
             upload_time=self.upload_parquet(engine=engine) #Inserir isso como método na classe
             elapsed_time=time.time()-start_time
             
@@ -493,6 +445,7 @@ class Splitter:
                     'prepare_lines_time':prepare_lines_time,
                     'perform_split_time':perform_split_time,
                     'overlapping_time':overlapping_time,
+                    'format_gdf':format_gdf,
                     'upload_sql_time':upload_time}
             # Encontrar o maior tempo e a chave correspondente
             # Tratar valores None e converter para float
@@ -505,7 +458,7 @@ class Splitter:
             logging.info(f'Tempos: {tempos}')        
         #Se der erro prossegue 
         except Exception as e:
-            # Registra o n_grid no arquivo de erro
+            # Registra o n_grid no arquivo de erro e no log o erro que ocorreu
             with open("logs/error_grids.txt", "a") as error_file:
                 error_file.write(f"{n_grid}\n")
             self.logger.error(f"Iteração do grid {self.n_grid} ERRO {e}")
