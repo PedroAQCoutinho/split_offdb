@@ -61,41 +61,36 @@ if __name__ == "__main__":
 
     #Carrega inputs !!
     #Lista de grids para iteração baseado no grid file gerado
-    grids = gpd.read_parquet(config["grid_file"])["grid_id"].tolist()      
+    grids = gpd.read_parquet(config["grid_file"])["id"].tolist()      
     #Carregar camada para split
     #data = load_input(config["input_file"])
     #Carregar o grid
     grid_gdf = gpd.read_parquet(config["grid_file"])
 
-
-    #Funcao para formatar array
-    create_query=f"CREATE SCHEMA IF NOT EXISTS split;DROP TABLE IF EXISTS split.{config['arquivos_final']} ;CREATE TABLE IF NOT EXISTS split.{config['arquivos_final']} (gid serial, id_layer text[], id_feature integer[], geometry geometry(polygon, 4674))"
-    with engine.connect() as conn:
-        with conn.begin():
-            r=conn.execute(text(create_query))
-
     #Roda o código aqui !!!!!!!!!!
     logger.info("Iniciando multiprocessing para grids")
     splitter = Splitter(config_path='config.json')
+    splitter.create_table_postgresql(engine=engine)
     splitter.run_parallel(grids=grids, grid_gdf=grid_gdf)
+    splitter.create_indices(engine=engine)
 
 
 
-    #Cria indices no banco
-    queries_index = [
-        f"create index if not exists idx_{config['arquivos_final']}_gid on split.{config['arquivos_final']} (gid);",
-        f"create index if not exists idx_{config['arquivos_final']}_id_layer on split.{config['arquivos_final']} (id_layer);",
-        f"create index if not exists idx_{config['arquivos_final']}_geom on split.{config['arquivos_final']} using gist (geometry);",
-        f"create index if not exists idx_{config['arquivos_final']}_id_feature on split.{config['arquivos_final']} (id_feature);"
-    ]
+    # #Cria indices no banco
+    # queries_index = [
+    #     f"create index if not exists idx_{config['arquivos_final']}_gid on split.{config['arquivos_final']} (gid);",
+    #     f"create index if not exists idx_{config['arquivos_final']}_id_layer on split.{config['arquivos_final']} (id_layer);",
+    #     f"create index if not exists idx_{config['arquivos_final']}_geom on split.{config['arquivos_final']} using gist (geometry);",
+    #     f"create index if not exists idx_{config['arquivos_final']}_id_feature on split.{config['arquivos_final']} (id_feature);"]
+
+    # with engine.connect() as conn:
+    #     for q in queries_index:
+    #         print(q)
+    #         with conn.begin():
+    #             r=conn.execute(text(q))
 
 
-
-    with engine.connect() as conn:
-        for q in queries_index:
-            print(q)
-            with conn.begin():
-                r=conn.execute(text(q))
+    
 
     # Calcula o tempo decorrido para o grid_spacing atual
     elapsed_time = time.time() - start_time
