@@ -347,7 +347,7 @@ class Splitter:
 
 
 
-    def format_gdf_broken_glass(self, drop_only_grid=True):
+    def format_gdf_broken_glass(self, n_grid, drop_only_grid=True):
         """
         Essa funcao precisa ser melhor pensada, pois aqui é o momento de facilitar as queries. Então, em cada rodada é bom poder manipular livremente a saída
         Formata o gdf broken glass, operações:
@@ -359,6 +359,8 @@ class Splitter:
         """
         start_time=time.time()
         try:
+
+            #Só processa se id_layer!=['GRID']
 
             #1. Dropa a coluna id pois o id sequencial é criado dentro de cada bloco, no entando no banco existirá a coluna gid serial
             self.gdf_broken_glass.drop(columns='id', inplace=True)
@@ -397,7 +399,7 @@ class Splitter:
             del self.unidade_split
 
         except Exception as e:
-            logging.error(f"Erro na formatação do output, não é possivel continuar ({e})")
+            logging.error(f"Erro na formatação do output para a iteração {n_grid} não é possivel continuar ({e})")
             
 
         elapsed_time=time.time()-start_time
@@ -437,7 +439,7 @@ class Splitter:
             prepare_lines_time=self.prepare_split_line()
             perform_split_time=self.perform_split()
             overlapping_time=self.process_overlapping()
-            format_gdf=self.format_gdf_broken_glass()
+            format_gdf=self.format_gdf_broken_glass(n_grid=n_grid)
             upload_time=self.upload_parquet(engine=engine) #Inserir isso como método na classe
             elapsed_time=time.time()-start_time
             
