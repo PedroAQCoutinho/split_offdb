@@ -12,9 +12,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import subprocess
 from rtree import index
+
 from utils import merge_parquet_files
 from sqlalchemy import text, create_engine
 from uploader import upload_parquet, upload_full_folder
+
 
 
 # Configuração do logger para main.log
@@ -63,7 +65,9 @@ if __name__ == "__main__":
     ##### Aqui pode ser um ponto de melhoria. Nao carregar na memoria ##### 
 
     #Lista de grids para iteração baseado no grid file gerado
+
     grids = gpd.read_parquet(config["grid_file"])["id"].tolist()      
+
 
 
     #Carregar o grid vetorial
