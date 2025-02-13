@@ -12,7 +12,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import subprocess
 from rtree import index
-import re
+
+from utils import merge_parquet_files
+from sqlalchemy import text, create_engine
+from uploader import upload_parquet, upload_full_folder
+
+
 
 # Configuração do logger para main.log
 logging.basicConfig(
@@ -33,38 +38,12 @@ os.makedirs('finais', exist_ok=True)
 
 
 
-# Função para instanciar e executar o Splitter para um grid específico
-def run_splitter(grid_id, data, config):
-    splitter = Splitter(config)
-    splitter.run(grid_id, data)
 
-def merge_parquet_files(folder_path, output_file="merged_output"):
-    start_merge = time.time()
-    # Lista todos os arquivos Parquet na pasta especificada
-    parquet_files = [f for f in os.listdir(folder_path) if f.endswith(".parquet")]
-
-    # Lê e armazena todos os GeoDataFrames em uma lista
-    gdfs = [gpd.read_parquet(os.path.join(folder_path, file)) for file in parquet_files]
-
-    # Concatena todos os GeoDataFrames em um só, como um empilhamento direto (rbind)
-    merged_gdf = gpd.GeoDataFrame(pd.concat(gdfs, ignore_index=True), crs=gdfs[0].crs)
-    
-    #Export    
-    merged_gdf.to_file(os.path.join('./finais', f'{output_file}.gpkg'), driver="gpkg")
-    merged_gdf.to_parquet(os.path.join('./finais', f'{output_file}.parquet'))
-    logger.info(f"Arquivo concatenado salvo como {output_file}")
-
-    # Usa subprocess para excluir arquivos na pasta .outputs
-    subprocess.run("rm ./outputs/*", shell=True, check=True)
-
-    elapsed_merge = time.time() - start_merge
-    logger.info(f"Tempo para merge dos arquivos Parquet: {elapsed_merge:.2f} segundos")
-
-# Executa o loop de grid spacing e mede o tempo
+# Dispara o processo quando executado a partir da linha de comando (python main.py)
 if __name__ == "__main__":
     
     start_time = time.time()
-    logger.info("Iniciando processamento geral")
+    logger.info(f"Iniciando processamento geral, PID : {os.getpid()}")
 
     # Carrega a configuração
     with open("config.json", "r") as f:
@@ -73,45 +52,35 @@ if __name__ == "__main__":
     # Skip prepare ?
     skip_prepare_inputs = config["skip_prepare_inputs"]
 
+    dataprocessor = DataProcessor() #usar grid spacing default
+    engine=dataprocessor.engine
 
     if not skip_prepare_inputs:
-        # Executa o DataProcessor com o grid_spacing atual
-        dataprocessor = DataProcessor() #usar grid spacing default
+        # Executa o DataProcessor com o grid_spacing atual e gera os inputs conforme as queries do config.json
         dataprocessor.run()
     else:
         print('Skipping prepare_inputs.py')
 
+    #Carregamento do grid na memória
+    ##### Aqui pode ser um ponto de melhoria. Nao carregar na memoria ##### 
 
-    #Carrega inputs !!
     #Lista de grids para iteração baseado no grid file gerado
-    grids = gpd.read_parquet(config["grid_file"])["grid_id"].tolist()     
-    files = os.listdir(config['output_path'])
-    numbers = [int(re.search(r'\d+', filename).group()) for filename in files if re.search(r'\d+', filename)]
-    grids = [grid for grid in grids if grid not in numbers]
- 
-    #Carregar camada para split
-    data = load_input(config["input_file"])
 
-    #Carregar o grid
+    grids = gpd.read_parquet(config["grid_file"])["id"].tolist()      
+
+
+
+    #Carregar o grid vetorial
     grid_gdf = gpd.read_parquet(config["grid_file"])
 
+    
+
     #Roda o código aqui !!!!!!!!!!
-    splitter = Splitter(data, config_path='config.json')
-    splitter.run_parallel(data=data, grids=grids, grid_gdf=grid_gdf)
-
-    # Executa o multiprocessing com a lista de grids
     logger.info("Iniciando multiprocessing para grids")
-    #Paralelismo baseado em multiprocessing
-
-
-    # Calcula o tempo decorrido para o grid_spacing atual
-    elapsed_time = time.time() - start_time
-    logger.info(f"Tempo de processamento: {elapsed_time:.2f} segundos")
-
-
-
-    # Limpeza e concatenação dos arquivos após cada iteração
-    merge_parquet_files(folder_path=config['output_path'], output_file=config["arquivos_final"])
+    splitter = Splitter(config_path='config.json')
+    splitter.create_table_postgresql(engine=engine)
+    splitter.run_parallel(grids=grids, grid_gdf=grid_gdf)
+    splitter.create_indices(engine=engine)
 
     # Tempo total de processamento
     elapsed_total = time.time() - start_time

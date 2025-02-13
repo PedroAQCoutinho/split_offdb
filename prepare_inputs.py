@@ -79,11 +79,12 @@ class DataProcessor:
 
     def export_municipio_data(self, gdf):
         try:
-            print('Salvando arquivos inputs...')
+            
             gdf.to_parquet(self.output_parquet)
             self.logger.info(f"Arquivo Parquet exportado com sucesso para {self.output_parquet}")
             gdf.to_file(self.output_parquet.replace(".parquet", ".gpkg"), layer='input', driver="GPKG")
-            print('Salvo ! ')
+            logging.info('Novo arquivo input.parquet criado')
+
         except Exception as e:
             self.logger.error(f"Erro ao exportar dados dos municípios: {e}")
 
@@ -109,11 +110,11 @@ class DataProcessor:
 
     def export_grid_data(self, grid_gdf):
         try:
-            print('Salvando arquivos grids...')
+            
             grid_gdf.to_parquet(self.grid_output_parquet)
             self.logger.info(f"Grid Parquet exportado com sucesso para {self.grid_output_parquet}")
             grid_gdf.to_file(self.grid_output_parquet.replace(".parquet", ".gpkg"), layer='grid', driver="GPKG")
-            print('Salvo !')
+            logging.info('Novo arquivo input.parquet criado')
         except Exception as e:
             self.logger.error(f"Erro ao exportar dados do grid: {e}")
 

@@ -1,14 +1,16 @@
 {
-    "grid_file": "./finais/split_administrativo_input.parquet",
+    "grid_file": "./inputs/grid.parquet",
     "input_file": "./inputs/input.parquet",
-    "arquivos_final":"split_brasil_ti",
+    "arquivos_final":"car_split",
     "output_path": "./outputs/",
     "num_processes": 5,
-    "grid_from_clause":"with feicoes as (select (ST_SquareGrid(0.5, geom)).geom geom from ibge.pa_br_uf_ibge_2022) select row_number() over () grid_id, geom from feicoes",
-    "input_from_clause":"select gid id ,'BIOMA' id_layer, geom from ibge.pa_br_biomas_ibge_2022 c union all select gid id, 'MUN' id_layer, geom from ibge.pa_br_municipios_ibge_2022 d union all select gid id, 'AMZL' id_layer, st_force2d(geom) geom from ibge.pa_br_amazonialegal_ibge_2022 g ",
+    "schema":"split",
+    "split_table_name":"split.input_car_split",
+    "grid_from_clause":"with feicoes as (select (ST_SquareGrid(0.5, geom)).geom geom from ibge.pa_br_uf_ibge_2022 a) select row_number() over () id, geom from feicoes",
+    "input_from_clause":"select gid id, 'CAR' id_layer, geom from car.car_mv cm where cm.uf  in ('AL')",
     "grid_spacing": 0.5,
-    "skip_input_gen":false,
+    "skip_input_gen":true,
     "skip_grid_gen":false,
-    "skip_prepare_inputs":true
+    "skip_prepare_inputs":false
 
 }
