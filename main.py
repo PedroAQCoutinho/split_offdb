@@ -37,11 +37,11 @@ os.makedirs('finais', exist_ok=True)
 
 
 
-# Executa o loop de grid spacing e mede o tempo
+# Dispara o processo quando executado a partir da linha de comando (python main.py)
 if __name__ == "__main__":
     
     start_time = time.time()
-    logger.info("Iniciando processamento geral")
+    logger.info(f"Iniciando processamento geral, PID : {os.getpid()}")
 
     # Carrega a configuração
     with open("config.json", "r") as f:
@@ -54,18 +54,22 @@ if __name__ == "__main__":
     engine=dataprocessor.engine
 
     if not skip_prepare_inputs:
-        # Executa o DataProcessor com o grid_spacing atual      
+        # Executa o DataProcessor com o grid_spacing atual e gera os inputs conforme as queries do config.json
         dataprocessor.run()
     else:
         print('Skipping prepare_inputs.py')
 
-    #Carrega inputs !!
+    #Carregamento do grid na memória
+    ##### Aqui pode ser um ponto de melhoria. Nao carregar na memoria ##### 
+
     #Lista de grids para iteração baseado no grid file gerado
     grids = gpd.read_parquet(config["grid_file"])["id"].tolist()      
-    #Carregar camada para split
-    #data = load_input(config["input_file"])
-    #Carregar o grid
+
+
+    #Carregar o grid vetorial
     grid_gdf = gpd.read_parquet(config["grid_file"])
+
+    
 
     #Roda o código aqui !!!!!!!!!!
     logger.info("Iniciando multiprocessing para grids")
@@ -73,29 +77,6 @@ if __name__ == "__main__":
     splitter.create_table_postgresql(engine=engine)
     splitter.run_parallel(grids=grids, grid_gdf=grid_gdf)
     splitter.create_indices(engine=engine)
-
-
-
-    # #Cria indices no banco
-    # queries_index = [
-    #     f"create index if not exists idx_{config['arquivos_final']}_gid on split.{config['arquivos_final']} (gid);",
-    #     f"create index if not exists idx_{config['arquivos_final']}_id_layer on split.{config['arquivos_final']} (id_layer);",
-    #     f"create index if not exists idx_{config['arquivos_final']}_geom on split.{config['arquivos_final']} using gist (geometry);",
-    #     f"create index if not exists idx_{config['arquivos_final']}_id_feature on split.{config['arquivos_final']} (id_feature);"]
-
-    # with engine.connect() as conn:
-    #     for q in queries_index:
-    #         print(q)
-    #         with conn.begin():
-    #             r=conn.execute(text(q))
-
-
-    
-
-    # Calcula o tempo decorrido para o grid_spacing atual
-    elapsed_time = time.time() - start_time
-    logger.info(f"Tempo de processamento: {elapsed_time:.2f} segundos")
-
 
     # Tempo total de processamento
     elapsed_total = time.time() - start_time

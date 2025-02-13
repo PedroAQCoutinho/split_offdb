@@ -1,5 +1,5 @@
 {
-    "grid_file": "./inputs_brasil/grid.parquet",
+    "grid_file": "./inputs/grid.parquet",
     "input_file": "./inputs/input.parquet",
     "arquivos_final":"car_split",
     "output_path": "./outputs/",
@@ -7,7 +7,7 @@
     "schema":"split",
     "split_table_name":"split.input_car_split",
     "grid_from_clause":"with feicoes as (select (ST_SquareGrid(0.5, geom)).geom geom from ibge.pa_br_uf_ibge_2022 a) select row_number() over () id, geom from feicoes",
-    "input_from_clause":"select gid id, 'CAR' id_layer, geom from car.car_mv cm where cm.uf  in ('AP')",
+    "input_from_clause":"select gid id, 'CAR' id_layer, geom from car.car_mv cm where cm.uf  in ('AL')",
     "grid_spacing": 0.5,
     "skip_input_gen":true,
     "skip_grid_gen":false,
