@@ -12,7 +12,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import subprocess
 from rtree import index
-from utils import merge_parquet_files
 from sqlalchemy import text, create_engine
 from uploader import upload_parquet, upload_full_folder
 
@@ -73,9 +72,16 @@ if __name__ == "__main__":
 
     #Roda o código aqui !!!!!!!!!!
     logger.info("Iniciando multiprocessing para grids")
+    #Intancia a classe
     splitter = Splitter(config_path='config.json')
+
+    #Cria a tabela
     splitter.create_table_postgresql(engine=engine)
+
+    #Roda em paralelo diversos grids, que utilizam recursos da instancia principal
     splitter.run_parallel(grids=grids, grid_gdf=grid_gdf)
+
+    #Cria indices na tabela final no db
     splitter.create_indices(engine=engine)
 
     # Tempo total de processamento

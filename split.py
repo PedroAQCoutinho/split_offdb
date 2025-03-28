@@ -83,10 +83,7 @@ class Splitter:
 
 
         self.logger.info(f"Splitter instanciado com sucesso")
-
-
-
-    
+ 
     def _intersection_sql(self, n_grid, grid_gdf, engine):
         """
         Realiza uma consulta SQL para selecionar geometrias que intersectam a unidade_split.
@@ -189,7 +186,7 @@ class Splitter:
                 #Cria um MultiLineString a partir de todas as linhas
                 multi_line=MultiLineString(linerings)
                 #Cria o MultiLineString com nós onde as linhas se cruzam
-                self.multi_line_with_nodes=shp.node(multi_line)        
+                self.multi_line_with_nodes=shp.unary_union(multi_line)        
             except Exception as e:
                 #Caso ocorra algum exception, o grid é pulado
                 logging.error(f'Nâo foi possivel formar o MultiLinestring pelo motivo {e}')
@@ -230,12 +227,9 @@ class Splitter:
         
         elapsed_time=time.time()-start_time
         return f'{elapsed_time:.2f}'
-
-
     #O processamento de overlapping é o que mais foi trabalho ate'agora, para tentar minimzar o custo computacional desse procedimento
     # A natureza do processa é custosa, pois, para cada caco de vidro é necessário calcular a quais poligonos originais ele se sobrepõe,
     # Para que seja possivel capturar as informações relacionadas ao poligono. Sem isso, os cacos de vidro ficam se informação na tabela de attr
-
     def process_overlapping(self):
         """
         Processa todos os fragmentos de vidro sequencialmente.
@@ -290,10 +284,18 @@ class Splitter:
         #Etapa de maior consumo de processador e memoria. Deve ser feito em iteração sequencial. Cada polígono do CAR deve ser
         # testado para sobreposicao com o representative point (glass_shard_point)
         for idx, row in nearest_polygon.iterrows():
-            
-            if row.geom.intersects(glass_shard_point):
-                
-                idx_true_intersection.append(idx)
+            try:
+                if row.geom.intersects(glass_shard_point):
+                    
+                    idx_true_intersection.append(idx)
+            except:
+                    valid_polygon = row.geom.buffer(0)
+                    
+                    if valid_polygon.intersects(glass_shard_point):
+                    
+                        idx_true_intersection.append(idx)
+
+
         #Por isso precisa resetar indice
         true_intersection = nearest_polygon.iloc[idx_true_intersection]        
 
@@ -308,8 +310,7 @@ class Splitter:
 
         return idx, id_layers, id_features
     
-
-
+    #Formatação
     def colunas_boleanas(self, engine):
         """
         Pega colunas booleanas da tabela de input. Importante para splits com muitas camadas de entrada.
@@ -328,6 +329,7 @@ class Splitter:
 
         return boleanas
 
+    #Auxiliar
     def create_table_postgresql(self, engine):
         """
         Cria a tabela no banco de dados. Se não conseguir criar, raise !
@@ -360,6 +362,7 @@ class Splitter:
 
         return None
 
+    #Auxiliar
     def create_indices(self, engine):
         """
         Cria índices em todas as colunas da tabela self.arquivo_final.
@@ -386,6 +389,7 @@ class Splitter:
 
         return None
 
+    #Formatação
     def format_gdf_broken_glass(self, n_grid, drop_only_grid=True):
         """
         Essa funcao precisa ser melhor pensada, pois aqui é o momento de facilitar as queries. Então, em cada rodada é bom poder 
@@ -460,6 +464,7 @@ class Splitter:
         elapsed_time=time.time()-start_time
         return f'{elapsed_time:.2f}'
 
+    #Upload no db
     def upload_db(self, engine):
         memory = psutil.virtual_memory()
         cpu_percent = psutil.cpu_percent(interval=0.1)  
@@ -479,6 +484,7 @@ class Splitter:
         elapsed_time=time.time()-start_time
         return f'{elapsed_time:.2f}'
 
+    #Run para 1 grid
     def run(self, n_grid, grid_gdf):
         # Função que processa cada grid específico
         
@@ -530,7 +536,7 @@ class Splitter:
                 error_file.write(f"{n_grid}\n")
             self.logger.error(f"Iteração do grid {self.n_grid} ERRO {e}")
             
-        
+    #Paraleliza para uma lista de grids
     def run_parallel(self, grids, grid_gdf):
         #Essa funcao cria diversas instancias da Classe
         run_splitter_partial = partial(self.run, grid_gdf=grid_gdf)
