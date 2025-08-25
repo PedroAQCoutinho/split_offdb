@@ -48,7 +48,7 @@ class Splitter:
         self.output_path = config["output_path"]
         self.schema = config["schema"]
         self.num_processes = config["num_processes"]
-        self.arquivo_final = config["arquivos_final"]
+        self.arquivo_final = config["tabela_saida"]
         self.split_table_name = config["split_table_name"]
         self.memory = psutil.virtual_memory()
 
@@ -146,7 +146,7 @@ class Splitter:
   
     def prepare_split_line(self):
         
-        self.counter=0
+        self.counter=[]
         start_time=time.time()
 
         """Essa funcao é a mais complicada do código
@@ -173,7 +173,7 @@ class Splitter:
                     line=LinearRing(line)
                     linerings.append(line)
                 else:
-                    self.counter+=1
+                    self.counter.append(row.to_dict())
                     #print(f"Feição descartada - ID: {row['id']}, ID Layer: {row['name']}, Geometria: {geom}")
                     #passa pro promixo loop e nao appenda
                     continue   
@@ -254,6 +254,7 @@ class Splitter:
 
         # Remove a coluna de ponto representativo, se não for mais necessária
         self.gdf_broken_glass.drop(columns="representative_point", inplace=True, errors='ignore')
+
         
         elapsed_time=time.time()-start_time
         return f'{elapsed_time:.2f}'
@@ -419,13 +420,10 @@ class Splitter:
                 self.gdf_broken_glass = self.gdf_broken_glass[self.gdf_broken_glass['id_layer'].apply(lambda x: 'MUN' in x)]
             
             # Inserir coluna cd_mun
-            self.gdf_broken_glass['cd_mun'] = self.gdf_broken_glass.apply(lambda row: row['id_feature'][row['id_layer'].index('MUN')], axis=1)
-            
-                      
+            self.gdf_broken_glass['cd_mun'] = self.gdf_broken_glass.apply(lambda row: row['id_feature'][row['id_layer'].index('MUN')], axis=1)     
+                     
             #Inserir coluna cd_uf
             self.gdf_broken_glass['cd_uf'] = self.gdf_broken_glass['cd_mun'].astype(str).str[:2].astype(int)
-
-
             
             #Contagem de CARs
             self.gdf_broken_glass['n_car'] = np.array([x.count('CAR') for x in self.gdf_broken_glass['id_layer']])
@@ -452,6 +450,8 @@ class Splitter:
             #Inputa area na tabela
             self.gdf_broken_glass['area_ha']=gdf_proj['area_ha']
             
+            
+
             
             #Libera memoria
             del gdf_proj
@@ -504,6 +504,8 @@ class Splitter:
             
             overlapping_time=self.process_overlapping()
             
+            
+            
             format_gdf=self.format_gdf_broken_glass(n_grid=n_grid)
            
             upload_time=self.upload_db(engine=engine) #Inserir isso como método na classe
@@ -525,8 +527,10 @@ class Splitter:
             #Encerra conexão, muito importante !!
             engine.dispose()
             
+
             logging.info(f'Iteração completa para o {n_grid} levou {elapsed_time:.2f} e a operação que levou mais tempo foi a funcao {max_time_func} com {max_time_value} e descartou {self.counter} feicoes')
             logging.info(f'Tempos: {tempos}')
+            
             
 
         #Se der erro prossegue 
@@ -543,6 +547,14 @@ class Splitter:
         # Função para execução paralela
         with Pool(processes=self.num_processes) as pool:
             pool.map(run_splitter_partial, grids)
+
+        #feicoes descartadas
+        # print('A')
+        # print(self.feicoes_descartadas)
+        # gdf=gpd.GeoDataFrame(data=self.feicoes_descartadas, geometry='geom',crs='EPSG:4674')
+        # print(gdf)
+        # gdf = gdf.set_geometry('geom')
+        # self.feicoes_descartadas.to_file(f"finais/feicoes_descartadas_{self.arquivo_final}.shp")
 
 
 
