@@ -44,7 +44,7 @@ Exemplo de configuração (`config.json`):
 {
     "grid_file": "./inputs/grid.parquet",
     "input_file": "./inputs/input.parquet",
-    "arquivos_final":"split (Gerará um arquivo split.gpkg e um split.parquet)",
+    "tabela_saida":"split (Gerará um arquivo split.gpkg e um split.parquet)",
     "output_path": "./outputs/",
     "num_processes": 5,
     "grid_from_clause":"Querie que exporta o grid",

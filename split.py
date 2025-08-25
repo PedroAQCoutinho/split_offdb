@@ -48,7 +48,7 @@ class Splitter:
         self.output_path = config["output_path"]
         self.schema = config["schema"]
         self.num_processes = config["num_processes"]
-        self.arquivo_final = config["arquivos_final"]
+        self.arquivo_final = config["tabela_saida"]
         self.split_table_name = config["split_table_name"]
         self.memory = psutil.virtual_memory()
 
@@ -83,10 +83,7 @@ class Splitter:
 
 
         self.logger.info(f"Splitter instanciado com sucesso")
-
-
-
-    
+ 
     def _intersection_sql(self, n_grid, grid_gdf, engine):
         """
         Realiza uma consulta SQL para selecionar geometrias que intersectam a unidade_split.
@@ -149,7 +146,7 @@ class Splitter:
   
     def prepare_split_line(self):
         
-        self.counter=0
+        self.counter=[]
         start_time=time.time()
 
         """Essa funcao é a mais complicada do código
@@ -176,7 +173,7 @@ class Splitter:
                     line=LinearRing(line)
                     linerings.append(line)
                 else:
-                    self.counter+=1
+                    self.counter.append(row.to_dict())
                     #print(f"Feição descartada - ID: {row['id']}, ID Layer: {row['name']}, Geometria: {geom}")
                     #passa pro promixo loop e nao appenda
                     continue   
@@ -189,7 +186,7 @@ class Splitter:
                 #Cria um MultiLineString a partir de todas as linhas
                 multi_line=MultiLineString(linerings)
                 #Cria o MultiLineString com nós onde as linhas se cruzam
-                self.multi_line_with_nodes=shp.node(multi_line)        
+                self.multi_line_with_nodes=shp.unary_union(multi_line)        
             except Exception as e:
                 #Caso ocorra algum exception, o grid é pulado
                 logging.error(f'Nâo foi possivel formar o MultiLinestring pelo motivo {e}')
@@ -230,12 +227,9 @@ class Splitter:
         
         elapsed_time=time.time()-start_time
         return f'{elapsed_time:.2f}'
-
-
     #O processamento de overlapping é o que mais foi trabalho ate'agora, para tentar minimzar o custo computacional desse procedimento
     # A natureza do processa é custosa, pois, para cada caco de vidro é necessário calcular a quais poligonos originais ele se sobrepõe,
     # Para que seja possivel capturar as informações relacionadas ao poligono. Sem isso, os cacos de vidro ficam se informação na tabela de attr
-
     def process_overlapping(self):
         """
         Processa todos os fragmentos de vidro sequencialmente.
@@ -260,6 +254,7 @@ class Splitter:
 
         # Remove a coluna de ponto representativo, se não for mais necessária
         self.gdf_broken_glass.drop(columns="representative_point", inplace=True, errors='ignore')
+
         
         elapsed_time=time.time()-start_time
         return f'{elapsed_time:.2f}'
@@ -290,10 +285,18 @@ class Splitter:
         #Etapa de maior consumo de processador e memoria. Deve ser feito em iteração sequencial. Cada polígono do CAR deve ser
         # testado para sobreposicao com o representative point (glass_shard_point)
         for idx, row in nearest_polygon.iterrows():
-            
-            if row.geom.intersects(glass_shard_point):
-                
-                idx_true_intersection.append(idx)
+            try:
+                if row.geom.intersects(glass_shard_point):
+                    
+                    idx_true_intersection.append(idx)
+            except:
+                    valid_polygon = row.geom.buffer(0)
+                    
+                    if valid_polygon.intersects(glass_shard_point):
+                    
+                        idx_true_intersection.append(idx)
+
+
         #Por isso precisa resetar indice
         true_intersection = nearest_polygon.iloc[idx_true_intersection]        
 
@@ -308,8 +311,7 @@ class Splitter:
 
         return idx, id_layers, id_features
     
-
-
+    #Formatação
     def colunas_boleanas(self, engine):
         """
         Pega colunas booleanas da tabela de input. Importante para splits com muitas camadas de entrada.
@@ -328,6 +330,7 @@ class Splitter:
 
         return boleanas
 
+    #Auxiliar
     def create_table_postgresql(self, engine):
         """
         Cria a tabela no banco de dados. Se não conseguir criar, raise !
@@ -360,6 +363,7 @@ class Splitter:
 
         return None
 
+    #Auxiliar
     def create_indices(self, engine):
         """
         Cria índices em todas as colunas da tabela self.arquivo_final.
@@ -386,6 +390,7 @@ class Splitter:
 
         return None
 
+    #Formatação
     def format_gdf_broken_glass(self, n_grid, drop_only_grid=True):
         """
         Essa funcao precisa ser melhor pensada, pois aqui é o momento de facilitar as queries. Então, em cada rodada é bom poder 
@@ -415,13 +420,10 @@ class Splitter:
                 self.gdf_broken_glass = self.gdf_broken_glass[self.gdf_broken_glass['id_layer'].apply(lambda x: 'MUN' in x)]
             
             # Inserir coluna cd_mun
-            self.gdf_broken_glass['cd_mun'] = self.gdf_broken_glass.apply(lambda row: row['id_feature'][row['id_layer'].index('MUN')], axis=1)
-            
-                      
+            self.gdf_broken_glass['cd_mun'] = self.gdf_broken_glass.apply(lambda row: row['id_feature'][row['id_layer'].index('MUN')], axis=1)     
+                     
             #Inserir coluna cd_uf
             self.gdf_broken_glass['cd_uf'] = self.gdf_broken_glass['cd_mun'].astype(str).str[:2].astype(int)
-
-
             
             #Contagem de CARs
             self.gdf_broken_glass['n_car'] = np.array([x.count('CAR') for x in self.gdf_broken_glass['id_layer']])
@@ -449,6 +451,8 @@ class Splitter:
             self.gdf_broken_glass['area_ha']=gdf_proj['area_ha']
             
             
+
+            
             #Libera memoria
             del gdf_proj
             del self.unidade_split
@@ -460,6 +464,7 @@ class Splitter:
         elapsed_time=time.time()-start_time
         return f'{elapsed_time:.2f}'
 
+    #Upload no db
     def upload_db(self, engine):
         memory = psutil.virtual_memory()
         cpu_percent = psutil.cpu_percent(interval=0.1)  
@@ -479,6 +484,7 @@ class Splitter:
         elapsed_time=time.time()-start_time
         return f'{elapsed_time:.2f}'
 
+    #Run para 1 grid
     def run(self, n_grid, grid_gdf):
         # Função que processa cada grid específico
         
@@ -497,6 +503,8 @@ class Splitter:
             perform_split_time=self.perform_split()
             
             overlapping_time=self.process_overlapping()
+            
+            
             
             format_gdf=self.format_gdf_broken_glass(n_grid=n_grid)
            
@@ -519,8 +527,10 @@ class Splitter:
             #Encerra conexão, muito importante !!
             engine.dispose()
             
+
             logging.info(f'Iteração completa para o {n_grid} levou {elapsed_time:.2f} e a operação que levou mais tempo foi a funcao {max_time_func} com {max_time_value} e descartou {self.counter} feicoes')
             logging.info(f'Tempos: {tempos}')
+            
             
 
         #Se der erro prossegue 
@@ -530,13 +540,21 @@ class Splitter:
                 error_file.write(f"{n_grid}\n")
             self.logger.error(f"Iteração do grid {self.n_grid} ERRO {e}")
             
-        
+    #Paraleliza para uma lista de grids
     def run_parallel(self, grids, grid_gdf):
         #Essa funcao cria diversas instancias da Classe
         run_splitter_partial = partial(self.run, grid_gdf=grid_gdf)
         # Função para execução paralela
         with Pool(processes=self.num_processes) as pool:
             pool.map(run_splitter_partial, grids)
+
+        #feicoes descartadas
+        # print('A')
+        # print(self.feicoes_descartadas)
+        # gdf=gpd.GeoDataFrame(data=self.feicoes_descartadas, geometry='geom',crs='EPSG:4674')
+        # print(gdf)
+        # gdf = gdf.set_geometry('geom')
+        # self.feicoes_descartadas.to_file(f"finais/feicoes_descartadas_{self.arquivo_final}.shp")
 
 
 
