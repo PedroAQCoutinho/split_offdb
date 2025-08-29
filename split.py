@@ -16,17 +16,17 @@ from shapely.strtree import STRtree
 from sqlalchemy import text, create_engine
 from dotenv import load_dotenv
 from sqlalchemy import Table, MetaData, Index
+from prepare_inputs import DataProcessor
 
 
 
+# def load_input(input_file):
+#     # Carregar o arquivo de entrada
+#     input_gdf = gpd.read_parquet(input_file)    
+#     print('Input carregado com sucesso !')
+#     return input_gdf
 
-def load_input(input_file):
-    # Carregar o arquivo de entrada
-    input_gdf = gpd.read_parquet(input_file)    
-    print('Input carregado com sucesso !')
-    return input_gdf
-
-class Splitter:
+class Splitter():
 
     def __init__(self, config_path="config.json"):
         
@@ -38,18 +38,33 @@ class Splitter:
         self.db_port = os.getenv("DB_PORT")
         self.db_name = os.getenv("DB_NAME") 
 
+
         # Carregar configuração do arquivo JSON
         with open(config_path, "r") as f:
             config = json.load(f)
+        
 
         # Acessando as variáveis carregadas
-        self.grid_file = config["grid_file"]
-        self.input_file = config["input_file"]
-        self.output_path = config["output_path"]
-        self.schema = config["schema"]
-        self.num_processes = config["num_processes"]
-        self.arquivo_final = config["tabela_saida"]
-        self.split_table_name = config["split_table_name"]
+        #GRID
+        self.grid_schema = config['grid']['schema']
+        self.grid_nome = config['grid']['nome']
+        #OUTPUT 
+        self.output_schema = config['output']["schema"]
+        self.output_nome = config['output']["tabela_saida"]
+        #INPUT
+        self.input_schema = config['input_algoritmo_split']['schema']
+        self.input_name = "input_" + self.output_nome
+        #VISAO FUNDIARIA
+        self.has_join = config['tabela_visao_fundiaria']['has_join']
+        self.campos = config['tabela_visao_fundiaria']['nome_coluna_visao_fundiaria']
+        self.coluna_hexadecimal = config['tabela_visao_fundiaria']['nome_coluna_hexadecimal']
+        self.path_visao_fundiaria = config['tabela_visao_fundiaria']['path_arquivo_csv']
+
+        self.num_processes = config["config"]["num_processes"]
+        
+        #schema + input_ + tabela_saida = nome da tabela de entrada
+        self.split_table_name = f'{config["output"]["schema"]}.input_{config["output"]["tabela_saida"]}'
+
         self.memory = psutil.virtual_memory()
 
         # Cria objetos estáticos vazios
@@ -57,16 +72,6 @@ class Splitter:
         self.input_gdf = None
         self.start_time = time.time()
         
-        #Logger dentro do init
-        self.logger = logging.getLogger(self.__class__.__name__)
-        self.logger.setLevel(logging.DEBUG)                
-        # Configuração básica de saída para o console
-        file_handler = logging.FileHandler('logs/splitter.log', mode='w', encoding='utf-8')
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        file_handler.setFormatter(formatter)
-        # Adiciona o handler ao logger
-        if not self.logger.hasHandlers():  # Evita duplicação de handlers
-            self.logger.addHandler(file_handler)
 
         # Dicionário com zonas UTM e seus respectivos códigos EPSG (apenas para o Brasil)
         self.utm_epsg_brazil = {
@@ -81,17 +86,15 @@ class Splitter:
         }
 
 
-
-        self.logger.info(f"Splitter instanciado com sucesso")
- 
-    def _intersection_sql(self, n_grid, grid_gdf, engine):
+        
+    def _intersection_sql(self, n_grid, engine):
         """
         Realiza uma consulta SQL para selecionar geometrias que intersectam a unidade_split.
         
         Args:
             engine de conexão com o banco;
             n_grid - número do grid para o qual será feito o processamento
-            grid_gdf - tabela com todos os grids para selecionar pelo número dado. Essa tabela é inputada para não ficar instanciada na memoria
+            grid_gdf - Tabela com todos os grids para selecionar pelo número n_grid. Essa tabela é inputada para não ficar instanciada na memoria
 
         Returns:
             Retorno é o elapsed_time, mas um objeto é criado dentro da instância
@@ -100,22 +103,32 @@ class Splitter:
 
         #Unidade split é o grid em questão. O split é performado apenas entre as feicoes que tocam o grid.
         self.n_grid = n_grid
-        self.unidade_split = grid_gdf[grid_gdf["id"] == self.n_grid].geometry.values[0]
+
+        query = f"""
+            SELECT geom
+            FROM {self.grid_schema}.{self.grid_nome}
+            WHERE id = {self.n_grid};
+            """
+        #Extrai o poligono do banco
+        grid_gdf = gpd.read_postgis(query, con=engine, geom_col='geom')
+        #Unidade split
+        self.unidade_split = grid_gdf.geometry.values[0]
+
 
         # Garantir que unidade_split esteja definida
         if not hasattr(self, "unidade_split"):
-            self.logger.error("unidade_split não está definida.")
+            logging.error("unidade_split não está definida.")
             raise ValueError("unidade_split precisa estar definida antes de chamar intersection_sql.")
         
-        # Extrair os bounds da unidade_split
-        bounds = self.unidade_split.bounds  # (minx, miny, maxx, maxy)
-        minx, miny, maxx, maxy = bounds
         
         # Criar a query SQL para filtrar na tabela inputs apenas os registros que estao no bounding box do grid
         query = f"""
-        SELECT id, id_layer, geom
-        FROM {self.split_table_name}
-        WHERE geom && ST_MakeEnvelope({minx}, {miny}, {maxx}, {maxy}, 4674
+        select a.id, a.id_layer, a.hexadecimal, a.geom
+        from {self.input_schema}.{self.input_name} a
+        where a.geom && (
+            select st_envelope(geom)
+            from {self.grid_schema}.{self.grid_nome}
+            where id = {self.n_grid}
         );
         """
         
@@ -129,6 +142,7 @@ class Splitter:
             self.gdf_input_intersection = gpd.GeoDataFrame(data={
                     'id': result_gdf['id'],
                     'id_layer': result_gdf['id_layer'],
+                    'hexadecimal' : result_gdf['hexadecimal'],
                     'geom': result_gdf.geom},
                 geometry='geom',
                 crs='EPSG:4674'
@@ -141,7 +155,7 @@ class Splitter:
         
         #Erro genérico (ponto de melhoria)
         except Exception as e: 
-            self.logger.error(f"Erro ao executar consulta SQL: {e}")
+            logging.error(f"Erro ao executar consulta SQL: {e}")
             raise
   
     def prepare_split_line(self):
@@ -159,27 +173,26 @@ class Splitter:
             for index, row in self.gdf_input_intersection.iterrows():
                 #Seleciona geometria do dado
                 geom=row.geom           
-                #Se for multipolygon, seleciona o primeiro polygon da feição e pega o boundary. 
-                # Aqui todas as geometria sao validas
-                if isinstance(geom, MultiPolygon):   
-                    geom= geom.geoms[0] 
-                    line=geom.exterior
-                elif isinstance(geom, Polygon):
-                    geom = geom
-                    line=geom.exterior # A funcao exterior é um sacada, ao invés de usar a boundary. Ler documentacao para compreender.
+                #Nova versão, aqui, para multipolygons ele explode a feicao e captura todos os subpolygons. É importante pois se não seriam perdidos fragmentos do multipolygon
+                #Extrair os poligonos de multipoligons ou pega a geometria in natura caso seja diferente de multipolygon
+                polys = list(geom.geoms) if isinstance(geom, MultiPolygon) else [geom]
+                for poly in polys:
+                    #Aqui, só serão admitidas entradas polygon, caso contrário, continue (descarte)
+                    if not isinstance(poly, Polygon):
+                        continue
+                    # exterior
+                    ext = poly.exterior
+                    if ext and ext.is_valid:
+                        linerings.append(LinearRing(ext.coords))
+                    # interiores (buracos)
+                    # Os buracos interiores devem ser também declarados como geometrias, e uma vez feito o split, elas não se sobreporão a nada
+                    for hole in poly.interiors:
+                        if hole and LinearRing(hole.coords).is_valid:
+                            linerings.append(LinearRing(hole.coords))
 
-                #Se a linha capturada for válida, appenda na lista de linearRings, se não for válida, joga no lixo pelo bem da humanidade
-                if line.is_valid:
-                    line=LinearRing(line)
-                    linerings.append(line)
-                else:
-                    self.counter.append(row.to_dict())
-                    #print(f"Feição descartada - ID: {row['id']}, ID Layer: {row['name']}, Geometria: {geom}")
-                    #passa pro promixo loop e nao appenda
-                    continue   
-
-            #Esse try é crítico. As tres próximas linhas são onde mais ocorre erro, principalmente a função node que ainda é um certo mistério
-            # como funciona. 
+            #Esse try é crítico. As tres próximas linhas são onde mais ocorre erro, principalmente a função node/unary_union que ainda é um certo mistério
+            # de como funciona. 
+            #Substitui node por unary_union. Nao lembro pq
             try:            
                 #Appenda o grid, para que seja feita a reconstrucao total do grid
                 linerings.append(LinearRing(self.unidade_split.exterior))
@@ -217,8 +230,9 @@ class Splitter:
             self.gdf_broken_glass = gpd.GeoDataFrame(data={"id": range(1, len(filtered_polygons) + 1)}, 
                                                     geometry=filtered_polygons, crs="EPSG:4674")
             #elapsed_time = time.time() - operation_start
-            #self.logger.info(f"Glass shattering complete, levou {elapsed_time:.2f} segundos para o clip do grid {self.n_grid}!")
+            #logging.info(f"Glass shattering complete, levou {elapsed_time:.2f} segundos para o clip do grid {self.n_grid}!")
             del self.multi_line_with_nodes
+            self.broken_glass_polygon = broken_glass_polygon
 
         except Exception as e:
             logging.error(f'Função perform_split na iteração {self.n_grid} deu o problema {e}')
@@ -247,13 +261,17 @@ class Splitter:
         # Exemplo: Caco de vidro X tem sobreposicao com o CAR 1, 2 e 3. A funcao retorna essa lista [1,2,3].
         
         results = self.gdf_broken_glass.apply(self._process_overlap_row, axis=1)
-        
+
+
         # Atualiza o GeoDataFrame com os resultados
         self.gdf_broken_glass["id_layer"] = results.apply(lambda x: x[1])
         self.gdf_broken_glass["id_feature"] = results.apply(lambda x: x[2])
+        self.gdf_broken_glass["hexadecimal"] = results.apply(lambda x: x[3])
+        
 
         # Remove a coluna de ponto representativo, se não for mais necessária
         self.gdf_broken_glass.drop(columns="representative_point", inplace=True, errors='ignore')
+
 
         
         elapsed_time=time.time()-start_time
@@ -272,11 +290,14 @@ class Splitter:
         glass_shard_point = shard_data["representative_point"]
 
         # Utiliza o indice para buscar o NEAREST. Existem pontos que nao se sobrepõe mas que são selecionados aqui
-        # Fazer em duas etapas é mais otimizado, pois 'query nearest é leve e torna o geom.intersects leve pela baixa quantidade de poligonos
-        nearest_index = self.spatial_index.query_nearest(glass_shard_point)
+        # Fazer em duas etapas é mais otimizado, pois 'query nearest() é leve e torna o geom.intersects leve pela baixa quantidade de poligonos
+        # Ajuste 28-ago: Descobri que o query nearest pode deixar de retornar algo que deveria, então teremos que usar o query() aqui
+        cand_idx = self.spatial_index.query_nearest(glass_shard_point)
+        if isinstance(cand_idx, (int, np.integer)):
+            cand_idx = [cand_idx]
 
         #Seleciona os nearest dentre os poligonos originais de inputs (exemplo CARs originais para CAR split)
-        nearest_polygon = self.gdf_input_intersection.iloc[nearest_index]
+        nearest_polygon = self.gdf_input_intersection.iloc[cand_idx].copy()
 
         #Resetar indice é importante
         nearest_polygon.reset_index(drop=False, inplace = True)
@@ -286,30 +307,52 @@ class Splitter:
         # testado para sobreposicao com o representative point (glass_shard_point)
         for idx, row in nearest_polygon.iterrows():
             try:
-                if row.geom.intersects(glass_shard_point):
+                #Contains é mais robusto que intersects por questões de margem
+                if row.geom.contains(glass_shard_point):
                     
                     idx_true_intersection.append(idx)
-            except:
+            except Exception as e:
+                    #Tenta novamente torná-lo válido
                     valid_polygon = row.geom.buffer(0)
                     
-                    if valid_polygon.intersects(glass_shard_point):
+                    if valid_polygon.contains(glass_shard_point):
                     
                         idx_true_intersection.append(idx)
 
 
         #Por isso precisa resetar indice
-        true_intersection = nearest_polygon.iloc[idx_true_intersection]        
+        true_intersection = nearest_polygon.iloc[idx_true_intersection]   
 
         # Se estiver vazio, retorna apenas id_do grid e id_layer="GRID". Podem ocorrer grids vazios a depender do INPUT.
         # Se não, retorna a lista com os id envolvidos
         if not true_intersection.empty:
-            id_layers = ['GRID'] + true_intersection["id_layer"].tolist()
-            id_features = [self.n_grid] + true_intersection["id"].tolist()
+            # old
+            # id_layers = ['GRID'] + true_intersection["id_layer"].tolist()
+            # id_features = [self.n_grid] + true_intersection["id"].tolist()
+            # hexadecimal = true_intersection["hexadecimal"].sum()
+
+            #Sugestão chatGPT para padronizar o tipo de array. Importante na hora de subir as coisas no DB
+            id_layers   = ['GRID'] + true_intersection["id_layer"].astype(str).str.upper().tolist()
+            id_features = [int(self.n_grid)] + [int(x) for x in true_intersection["id"].tolist()]
+            # soma segura:
+            # O GRID nativamente nao tem hexadecimal, então aqui ele surge como NA. 
+            # Ao usar fillna(0) atribuimos ao grid sempre 0, o que nao intefere
+            # únicos por valor de hexadecimal
+            hex_vals = (
+                pd.to_numeric(true_intersection["hexadecimal"], errors="coerce")
+                .dropna()
+                .astype("int")
+                .unique()
+            )
+            hexadecimal = int(np.sum(hex_vals)) if hex_vals.size else 0
+            
+            
         else:
             id_layers = ['GRID']
-            id_features = [self.n_grid]
+            id_features = [int(self.n_grid)]
+            hexadecimal = 0
 
-        return idx, id_layers, id_features
+        return idx, id_layers, id_features, hexadecimal
     
     #Formatação
     def colunas_boleanas(self, engine):
@@ -320,7 +363,7 @@ class Splitter:
         is_ti = TRUE significa que aquele caco de vidro tem sobrep. com uma TI
         """
         try:
-            query=f'select distinct id_layer from {self.split_table_name};'
+            query=f'select distinct id_layer from {self.input_schema}.{self.input_name};'
             df=pd.read_sql_query(query,con=engine)
             boleanas=[i for i in df.id_layer]
             logging.info(f"Colunas booleanas capturadas com sucesso ({boleanas})")
@@ -330,114 +373,164 @@ class Splitter:
 
         return boleanas
 
+    #Define base_cols
+    def array_base_cols(self):
+        """Define quais serão as colunas da tabela saída do modelo"""
+        bc = {
+                'gid'            : 'serial PRIMARY KEY',
+                'id_layer'       : 'text[]',
+                'id_layer_unico' : 'text[]',
+                'id_feature'     : 'integer[]',
+                'hexadecimal'    : 'bigint',
+                'cd_mun'         : 'integer',
+                'cd_uf'          : 'integer',
+                'n_car'          : 'integer',
+                'area_ha'        : 'numeric(20,4)',
+                # booleanas entram na sequencia
+                # geometry entra por último
+            }
+
+        #Adiciona as colunas booleanas
+        for x in self.boleanas:
+            bname = f'is_{str(x).lower()}'
+            bc[bname] = 'boolean'
+        #Adiciona os campos da tabela de visões 
+        if self.has_join:                
+            if not len(self.campos)==0:
+                for campo in self.campos:
+                    bc[campo] = 'text'
+        #Adiciona a coluna geom
+        bc['geometry'] = 'geometry(Polygon, 4674)'
+
+
+        return bc
+
     #Auxiliar
-    def create_table_postgresql(self, engine):
+    def create_table(self, engine):
         """
         Cria a tabela no banco de dados. Se não conseguir criar, raise !
-        """
-        try:
-            self.boleanas = self.colunas_boleanas(engine=engine)
-            create_query=[f"CREATE SCHEMA IF NOT EXISTS {self.schema};",
-                      f"DROP TABLE IF EXISTS {self.schema}.{self.arquivo_final};"]
+        """         
+        self.boleanas = self.colunas_boleanas(engine=engine)
+        create_query=[f"CREATE SCHEMA IF NOT EXISTS {self.output_schema};",
+                    f"DROP TABLE IF EXISTS {self.output_schema}.{self.output_nome};"]
+        
+        #Cnostroi o dictionary com as colunas base
+        base_cols=self.array_base_cols()
 
-            #Algumas gambiarras aqui
+        #Querie final para criação da tabela
+        tabela = f"""CREATE TABLE IF NOT EXISTS 
+        {self.output_schema}.{self.output_nome} (""" +  ", ".join([f"{x} {base_cols[x]}" for x in base_cols.keys()]) + ')'  
             
-            tabela = f"CREATE TABLE IF NOT EXISTS {self.schema}.{self.arquivo_final} (gid serial, id_layer text[], id_feature integer[], cd_mun integer, cd_uf integer, n_car INTEGER, " + ", ".join([f"is_{x} BOOLEAN" for x in self.boleanas]) + ", area_ha NUMERIC, geometry geometry(polygon, 4674));"
-            create_query.append(tabela)
-
-            #Executa as queries na lsita create_query
-            with engine.connect() as conn:
-                logging.info(f"Criando tabela ({self.arquivo_final}) de saída")
-                for q in create_query:
-                    with conn.begin():
-                        conn.execute(text(q))
-
-            logging.info(f"Tabela {self.arquivo_final} criada com sucesso")
-
-        except Exception as e:
-            logging.error(f"Erro na criação da tabela {self.arquivo_final}, interrompendo processo.")
-
-            raise
+        #Lista com sequencia de 3 queries (CREATE SCHEMA, DROP IF EXISTES, CREATE TABLE)
+        create_query.append(tabela)
+        
+        with engine.begin() as conn:
+            for q in create_query:
+                try:
+                    conn.execute(text(q))
+                    # Coleta resultados apenas quando houver linhas (SELECT)                    
+                    logging.info(f"Query executada com sucesso. \n {q}")
+                    # NUNCA chame conn.commit() aqui
+                except Exception as e:
+                    # logger com stacktrace
+                    logging.exception(f"Erro executando query: {q[:200]} ...")
+                    raise  # deixa a exception subir (útil p/ quem chamou decidir)
 
 
+            logging.info(f"Tabela {self.output_nome} criada com sucesso")
 
         return None
 
     #Auxiliar
     def create_indices(self, engine):
         """
-        Cria índices em todas as colunas da tabela self.arquivo_final.
+        Cria índices em todas as colunas da tabela self.output_nome.
         Utiliza GIST para colunas de geometria.
         """    
+        #Dicionario de colunas
+        base_cols=self.array_base_cols()
+        tabela = f"{self.output_schema}.{self.output_nome}"
+        colunas = base_cols.keys()
 
-        tabela = f"{self.schema}.{self.arquivo_final}"
-        colunas = ["cd_mun", "cd_uf", "n_car", "area_ha"] + [f"is_{x}" for x in self.boleanas]
-
-        with engine.connect() as conn:
+        with engine.begin() as conn:
             for coluna in colunas:
-                idx = f"CREATE INDEX idx_{self.arquivo_final}_{coluna} ON {tabela} ({coluna});"                
-                with conn.begin():
-                    logging.info(idx)
+              
+                alias = "USING GIST" if coluna == "geometry" else ""
+                idx = f"CREATE INDEX idx_{self.output_schema}_{self.output_nome}_{coluna} ON {tabela} {alias} ({coluna});" 
+
+                try:
                     conn.execute(text(idx))
+                    # Coleta resultados apenas quando houver linhas (SELECT)                    
+                    logging.info(f"Query executada com sucesso. \n {idx}")
+                    # NUNCA chame conn.commit() aqui
+                except Exception as e:
+                    # logger com stacktrace
+                    logging.exception(f"Erro executando query: {idx[:200]} ...")
+                    raise  # deixa a exception subir (útil p/ quem chamou decidir)
+
+
   
-        
-        # Índice GIST para geometria
-        idx_geometry = f"CREATE INDEX idx_{self.arquivo_final}_geometry_gist ON {tabela} USING GIST (geometry);"
-        with engine.connect() as conn:
-            with conn.begin():
-                logging.info(idx_geometry)
-                conn.execute(text(idx_geometry))
 
         return None
 
     #Formatação
-    def format_gdf_broken_glass(self, n_grid, drop_only_grid=True):
+    def format_gdf_broken_glass(self):
         """
         Essa funcao precisa ser melhor pensada, pois aqui é o momento de facilitar as queries. Então, em cada rodada é bom poder 
         manipular livremente a saída.
 
         Formata o gdf broken glass, operações:
-        1. Dropa coluna ID
-        2. Formata os campos id_layer e id_feature para adequação ao db
-        3. Cria colunas booleanas e testa o campo id_layer para presenca da camada, retornando true ou false.
-        4. Calcula área das feicoes, apenas se drop_only_grid = True (default). Se for falso, mantem as feicoes id_layer=['GRID']
-        5. (TESTE) Incluir coluna com cd_uf e cd_mun  
+        # 1. Dropa coluna id pq no banco ja existe id serial4
+        # 2. Drop onde é id_layer = ['GRID'] através da condiução hexadecimal = 0. O objetivo é descartar geometrias que não tem nenhuma informação
+        # 3. Adiciona colunas cd_mun e cd_uf
+        # 4. Conta número de CARs na feição
+        # 5. Adiciona colunas boleanas
+        # 6. Calcula área das feicoes. Para isso é necessario descobrir a zona do grid e reprojar e dado de acordo com a feicao
+        # 7. Cria a coluna id_layer_unico
+        # 8. Converte as arrays nativas de python para uma string compreensivel pelo db
         """
 
         
 
         start_time=time.time()
+  
         try:
+            # 1. Dropa coluna id
+            self.gdf_broken_glass.drop(columns='id', inplace=True)       
 
-            #Só processa se id_layer!=['GRID']
+            # 2. Drop onde é id_layer = ['GRID'] através da condiução hexadecimal = 0. O objetivo é descartar geometrias que não tem nenhuma informação
+            self.gdf_broken_glass=self.gdf_broken_glass[self.gdf_broken_glass['hexadecimal'] != 0]      
 
-            #1. No banco existirá a coluna gid serial para cada feicao inserida. Portanto, dropa a coluna id 
-            self.gdf_broken_glass.drop(columns='id', inplace=True)
+            # 3. Adiciona colunas cd_mun e cd_uf
+            #Define a mask, que é onde existe 'MUN' na array
+            mask = self.gdf_broken_glass['id_layer'].apply(lambda xs: 'MUN' in xs)
 
-            #5. Dropar registros em que há apenas a classe 'GRID' no id_layer. Considerando que, sempre deve haver um municipio,
-            # um registro apenas com a feicao GRID está fora do Brasil. Se for rodar um split sem municipio, colocar drop_only_grid = False
-            if drop_only_grid:
-                self.gdf_broken_glass = self.gdf_broken_glass[self.gdf_broken_glass['id_layer'].apply(lambda x: 'MUN' in x)]
-            
-            # Inserir coluna cd_mun
-            self.gdf_broken_glass['cd_mun'] = self.gdf_broken_glass.apply(lambda row: row['id_feature'][row['id_layer'].index('MUN')], axis=1)     
-                     
-            #Inserir coluna cd_uf
-            self.gdf_broken_glass['cd_uf'] = self.gdf_broken_glass['cd_mun'].astype(str).str[:2].astype(int)
-            
-            #Contagem de CARs
+            self.gdf_broken_glass['cd_mun']=pd.NA
+            self.gdf_broken_glass['cd_uf']=pd.NA
+
+            #cd_mun apenas onde há 'MUN'. Isso evita warnings desnecessários.
+            self.gdf_broken_glass.loc[mask, 'cd_mun'] = self.gdf_broken_glass.loc[mask].apply(
+                lambda row: int(row['id_feature'][next(i for i, v in enumerate(row['id_layer']) if str(v).upper() == 'MUN')]),
+                axis=1
+            ).astype('int')
+
+            #cd_uf apenas onde há 'MUN'. Isso evita warnings desnecessários.
+            self.gdf_broken_glass.loc[mask,'cd_uf'] = (
+                self.gdf_broken_glass.loc[mask, 'cd_mun']          
+                .astype(str).str[:2]
+                .astype('int')
+            ).where(mask, other=pd.NA).astype('int')
+
+            # 4. Conta número de CARs na feição
             self.gdf_broken_glass['n_car'] = np.array([x.count('CAR') for x in self.gdf_broken_glass['id_layer']])
 
-            #2. Aplicando a função para transformar lista em string exemplo [CAR, CAR, GRID] em '{CAR, CAR, GRID}' que é interpretada como array no banco
-            self.gdf_broken_glass['id_layer'] = self.gdf_broken_glass['id_layer'].apply(lambda x: '{' + ','.join(map(str, x)) + '}')
-            self.gdf_broken_glass['id_feature'] = self.gdf_broken_glass['id_feature'].apply(lambda x: '{' + ','.join(map(str, x)) + '}')
-
-            #3. Cria colunas boleanas
+            # 5. Adiciona colunas boleanas
             for coluna in self.boleanas:
-                self.gdf_broken_glass[f'is_{coluna.lower()}']=self.gdf_broken_glass['id_layer'].apply(lambda x: f'{coluna}' in x)
+                alvo = coluna.upper()
+                self.gdf_broken_glass[f'is_{coluna.lower()}'] = \
+                    self.gdf_broken_glass['id_layer'].apply(lambda xs: alvo in xs)   
 
-
-            #4. Calcula área das feicoes. Para isso é necessario descobrir a zona do grid e reprojar e dado de acordo com a feicao
+            # 6. Calcula área das feicoes. Para isso é necessario descobrir a zona do grid e reprojar e dado de acordo com a feicao
             #Descobre em qual zona está o grid
             xmin, ymin, xmax, ymax = self.unidade_split.bounds
             longitude_media_grid=(xmin + xmax) / 2
@@ -449,16 +542,32 @@ class Splitter:
             gdf_proj['area_ha'] = gdf_proj.geometry.area/10000
             #Inputa area na tabela
             self.gdf_broken_glass['area_ha']=gdf_proj['area_ha']
-            
-            
 
-            
-            #Libera memoria
-            del gdf_proj
-            del self.unidade_split
+            # 7. Cria a coluna id_layer_unico 
+            self.gdf_broken_glass['id_layer_unico'] = self.gdf_broken_glass['id_layer'].apply(lambda x: np.unique(np.sort(x)))
+
+            # 8. Converte as arrays nativas de python para uma string compreensivel pelo db
+            self.gdf_broken_glass['id_layer'] = self.gdf_broken_glass['id_layer'].apply(lambda x: '{' + ','.join(map(str, x)) + '}')
+            self.gdf_broken_glass['id_layer_unico'] = self.gdf_broken_glass['id_layer_unico'].apply(lambda x: '{' + ','.join(map(str, x)) + '}')
+            self.gdf_broken_glass['id_feature'] = self.gdf_broken_glass['id_feature'].apply(lambda x: '{' + ','.join(map(str, x)) + '}')
+
+            # 9. Faz o join com a tabela de categorias fundiárias
+            tabela_indice=pd.read_csv(self.path_visao_fundiaria, sep = ';')            
+            self.gdf_broken_glass=self.gdf_broken_glass.merge(tabela_indice, on=['hexadecimal',f'{self.coluna_hexadecimal}'], how = 'left')
+
+
 
         except Exception as e:
-            logging.error(f"Erro na formatação do output para a iteração {n_grid} não é possivel continuar ({e})")
+            logging.error(f"Erro observado {e}")
+            raise
+
+
+        
+        #Libera memoria
+        del gdf_proj
+        del self.unidade_split
+
+
             
 
         elapsed_time=time.time()-start_time
@@ -466,26 +575,32 @@ class Splitter:
 
     #Upload no db
     def upload_db(self, engine):
+        """Funcao que fará o upload da tabela no banco"""
+
         memory = psutil.virtual_memory()
         cpu_percent = psutil.cpu_percent(interval=0.1)  
-        start_time = time.time()         
-        
-        #Upload direto no db
-        self.gdf_broken_glass.to_postgis(
-            name=self.arquivo_final,
-            con=engine,
-            schema=self.schema,
-            if_exists="append",
-            index=False
-        )
+        start_time = time.time() 
 
-        self.logger.info(f"Iteração do grid {self.n_grid} armazenada - Uso de memória : {memory.percent}% - CPU : {cpu_percent}%")
+        try:    
+            self.gdf_broken_glass.to_postgis(
+                    name=self.output_nome,
+                    con=engine,
+                    schema=self.output_schema,
+                    if_exists="append",
+                    index=False
+                )
+            logging.info(f"Iteração do grid {self.n_grid} armazenada - Uso de memória : {memory.percent}% - CPU : {cpu_percent}%")
+        except Exception as e:
+            logging.error(f"Falha no upload_db em {self.n_grid}, erro {e}")
+            
+
+        
         del self.gdf_broken_glass
         elapsed_time=time.time()-start_time
         return f'{elapsed_time:.2f}'
 
     #Run para 1 grid
-    def run(self, n_grid, grid_gdf):
+    def run(self, n_grid):
         # Função que processa cada grid específico
         
         start_time=time.time()
@@ -497,18 +612,19 @@ class Splitter:
             )
 
             
-            intersection_time=self._intersection_sql(n_grid=n_grid, grid_gdf=grid_gdf, engine=engine)
-            
+            intersection_time=self._intersection_sql(n_grid=n_grid, engine=engine)
+
             prepare_lines_time=self.prepare_split_line()
+
             perform_split_time=self.perform_split()
-            
-            overlapping_time=self.process_overlapping()
-            
-            
-            
-            format_gdf=self.format_gdf_broken_glass(n_grid=n_grid)
-           
-            upload_time=self.upload_db(engine=engine) #Inserir isso como método na classe
+
+            overlapping_time=self.process_overlapping()                       
+
+            format_gdf=self.format_gdf_broken_glass()
+
+            #Inserir isso como método na classe
+            upload_time=self.upload_db(engine=engine)
+
             elapsed_time=time.time()-start_time
             
             tempos={'intersection_time':intersection_time,
@@ -538,15 +654,14 @@ class Splitter:
             # Registra o n_grid no arquivo de erro e no log o erro que ocorreu
             with open("logs/error_grids.txt", "a") as error_file:
                 error_file.write(f"{n_grid}\n")
-            self.logger.error(f"Iteração do grid {self.n_grid} ERRO {e}")
+            
+            logging.error(f"Iteração do grid {self.n_grid} ERRO {e}")
             
     #Paraleliza para uma lista de grids
-    def run_parallel(self, grids, grid_gdf):
-        #Essa funcao cria diversas instancias da Classe
-        run_splitter_partial = partial(self.run, grid_gdf=grid_gdf)
+    def run_parallel(self, grids):
         # Função para execução paralela
         with Pool(processes=self.num_processes) as pool:
-            pool.map(run_splitter_partial, grids)
+            pool.map(self.run, grids)
 
         #feicoes descartadas
         # print('A')
@@ -554,30 +669,42 @@ class Splitter:
         # gdf=gpd.GeoDataFrame(data=self.feicoes_descartadas, geometry='geom',crs='EPSG:4674')
         # print(gdf)
         # gdf = gdf.set_geometry('geom')
-        # self.feicoes_descartadas.to_file(f"finais/feicoes_descartadas_{self.arquivo_final}.shp")
+        # self.feicoes_descartadas.to_file(f"finais/feicoes_descartadas_{self.output_nome}.shp")
 
 
 
-# # Uso da classe Splitter com logging
+# Uso da classe Splitter com logging
 
 # if __name__ == "__main__":
 
+
+#     # Carregar variáveis do .env para conexão com o banco
+#     load_dotenv()
+#     db_user = os.getenv("DB_USER")
+#     db_password = os.getenv("DB_PASSWORD")
+#     db_host = os.getenv("DB_HOST")
+#     db_port = os.getenv("DB_PORT")
+#     db_name = os.getenv("DB_NAME")
+
+
+#     engine = create_engine(
+#             f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+#         )
 
 #     start_time = time.time()
 
 #     with open("config.json", "r") as f:
 #         config = json.load(f)  
 
-#     data = load_input(config["input_file"])
    
 #     splitter = Splitter()
-#     splitter.load_data()
-#     splitter._intersection(13, data) # Foi criada a _intersection pois a antiga fazia apenas o touches, o que sobrecarregava a memoria
-#     splitter.intersection(13, data)
-#     splitter.prepare_split_line()
-#     splitter.perform_split()
-#     splitter.calculate_overlapping()
-#     splitter.save_results()
+
+#     splitter._intersection_sql(n_grid=13, engine=engine) # Foi criada a _intersection pois a antiga fazia apenas o touches, o que sobrecarregava a memoria
+#     # splitter.intersection(13, data)
+#     # splitter.prepare_split_line()
+#     # splitter.perform_split()
+#     # splitter.calculate_overlapping()
+#     # splitter.save_results()
 
 
  

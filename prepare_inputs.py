@@ -1,27 +1,16 @@
-import geopandas as gpd
+
 import json
 import os
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 import time
 import logging
+from typing import Sequence, Union, Optional, List, Any
+
 
 class DataProcessor:
-    def __init__(self, config_path="config.json", grid_spacing=0.5):
+    def __init__(self, config_path="config.json"):
         
-        #Logger
-        self.logger = logging.getLogger(self.__class__.__name__)
-        self.logger.setLevel(logging.DEBUG)        
-        self.logger.propagate = False  # Evita que os logs do splitter apareçam em main.log
-        
-        # Configuração básica de saída para o console
-        file_handler = logging.FileHandler('logs/prepare_inputs.log', mode = 'w')
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        file_handler.setFormatter(formatter)
-        
-        # Adiciona o handler ao logger
-        if not self.logger.hasHandlers():  # Evita duplicação de handlers
-            self.logger.addHandler(file_handler)
 
         # Carregar variáveis do .env para conexão com o banco
         load_dotenv()
@@ -30,128 +19,219 @@ class DataProcessor:
         self.db_host = os.getenv("DB_HOST")
         self.db_port = os.getenv("DB_PORT")
         self.db_name = os.getenv("DB_NAME")
-
         # Carregar configuração do arquivo JSON
+
         with open(config_path, "r") as f:
-            config = json.load(f)
-
-        self.skip_input_gen = config["skip_input_gen"]
-        self.skip_grid_gen = config.get("skip_grid_gen", False)  # Garantir existência
-        self.input_from_clause = config["input_from_clause"]
-        self.grid_from_clause = config["grid_from_clause"]
-
-        # Parâmetro opcional
-        if grid_spacing==0.5:
-            self.grid_spacing = config["grid_spacing"]
-        else:
-            self.grid_spacing = grid_spacing
-
-        self.logger.info(f"Configuração carregada com espaçamento de grid: {self.grid_spacing}")
-
-        self.output_parquet = config["input_file"]
-        self.grid_output_parquet = config["grid_file"]
+            self.config = json.load(f)
 
         # Criar o engine de conexão
         self.engine = create_engine(
             f"postgresql://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
         )
 
-    def load_municipio_data(self):
-        # Montar a query com base no parâmetro municipios
-        query = f"""
-        {self.input_from_clause};
+
+    def run_sql(
+        self,
+        sql: Union[str, Sequence[str]],
+        fetch: bool = False,           # se True, retorna linhas de SELECTs
+    ) -> Optional[List[Any]]:
         """
-        #print(query)
-        #print(query)
-        # Carregar os dados em um GeoDataFrame
-        try:
-            gdf = gpd.read_postgis(query, self.engine, geom_col="geom")
-            if gdf.empty:
-                self.logger.warning("Nenhuma geometria encontrada para os municípios especificados.")
-                return None
-            gdf.set_crs("EPSG:4674", inplace=True)
-            self.logger.info("Dados dos municípios carregados com sucesso.")
-            return gdf
-        except Exception as e:
-            self.logger.error(f"Erro ao carregar dados dos municípios: {e}")
-            raise ValueError("É necessária a geometria para prosseguir")
+        Executa 1 ou N statements em transação única.
+        - Se `fetch=True`, retorna lista de resultados (apenas dos statements que retornam linhas).
+        - Em caso de erro, faz rollback automático e relança a exceção.
+        """
+        stmts: List[str] = [sql] if isinstance(sql, str) else list(sql)
+        results: List[Any] = []
+
+        # transação única; commit automático ao sair, rollback em exceção
+        with self.engine.begin() as conn:
+            for s in stmts:
+                try:
+                    res = conn.execute(text(s))
+                    # Coleta resultados apenas quando houver linhas (SELECT)
+                    if fetch and res.returns_rows:
+                        rows = res.fetchall()
+                        results.append(rows)
+                    logging.info(f"Query executada com sucesso. \n {s}")
+                    # NUNCA chame conn.commit() aqui
+                except Exception as e:
+                    # logger com stacktrace
+                    logging.exception(f"Erro executando query: {s[:200]} ...")
+                    raise  # deixa a exception subir (útil p/ quem chamou decidir)
+
+        return results if fetch else None
 
 
-    def export_municipio_data(self, gdf):
-        try:
+    def check_table_exists(self, schema: str, tabela: str) -> bool:
+        """Checa se a tabela existe em um schema e retorna True/False."""
+        sql = f"""
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.tables
+                WHERE table_schema = '{schema}'
+                AND table_name = '{tabela}'
+            );
+        """
+        res = self.run_sql([sql], fetch=True)
+        # se sua run_sql usar scalar(), isso já deve vir como [True] ou [False]
+        return bool(res[0])
+
+
+
+    def check_schema(self):
+        """Verifica a existencia dos schemas necessários à criação do GRID e do INPUT"""
+        # Verifica se existe
+        
+        for s in [self.config["grid"]["schema"], self.config["input_algoritmo_split"]["schema"], self.config["output"]["schema"]]:
+    
+            querie = f"""
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM information_schema.schemata
+                    WHERE schema_name = '{s}'
+                );
+            """
             
-            gdf.to_parquet(self.output_parquet)
-            self.logger.info(f"Arquivo Parquet exportado com sucesso para {self.output_parquet}")
-            gdf.to_file(self.output_parquet.replace(".parquet", ".gpkg"), layer='input', driver="GPKG")
-            logging.info('Novo arquivo input.parquet criado')
+            check = self.run_sql([querie], fetch=True)[0][0][0]
 
-        except Exception as e:
-            self.logger.error(f"Erro ao exportar dados dos municípios: {e}")
+
+            if check:
+                logging.info(f"Schema '{s}' já existe.")
+            else:
+                logging.info(f"Schema '{s}' não existe. Criando...")
+                querie = f"CREATE SCHEMA {s};"
+                self.run_sql([querie])
+                logging.info(f"Schema '{s}' criado com sucesso.")
+
+
+
 
     def create_grid(self):
+        """
+        Cria um grid regular em cima da `tabela_base_grid` usando uma where_clause opcional.
         
-        # Construir a query de grid usando as cláusulas do config.json
-        grid_query = f"""
-        {self.grid_from_clause}
+        Requer PostGIS >= 3 (ST_SquareGrid).
         """
         
-        #print(grid_query)  # Apenas para debug
-        try:
-            grid_gdf = gpd.read_postgis(grid_query, self.engine, geom_col="geom")
-            if grid_gdf.empty:
-                self.logger.warning("Nenhuma célula de grid foi gerada.")
-                return None
-            grid_gdf.set_crs("EPSG:4674", inplace=True)
-            self.logger.info("Grid criado com sucesso.")
-            return grid_gdf
-        except Exception as e:
-            self.logger.error(f"Erro ao criar o grid: {e}")
-            return None
-
-    def export_grid_data(self, grid_gdf):
-        try:
-            
-            grid_gdf.to_parquet(self.grid_output_parquet)
-            self.logger.info(f"Grid Parquet exportado com sucesso para {self.grid_output_parquet}")
-            grid_gdf.to_file(self.grid_output_parquet.replace(".parquet", ".gpkg"), layer='grid', driver="GPKG")
-            logging.info('Novo arquivo input.parquet criado')
-        except Exception as e:
-            self.logger.error(f"Erro ao exportar dados do grid: {e}")
-
-    def run(self):
         
-        self.logger.info("Iniciando processamento de dados...")
-        if not self.skip_input_gen:
-            municipio_gdf = self.load_municipio_data()
-            if municipio_gdf is not None:
-                self.export_municipio_data(municipio_gdf)
+        # Construir a query de grid usando as cláusulas do config.json
+        queries = []
+
+        drop_grid = f'DROP TABLE IF EXISTS {self.config["grid"]["schema"]}.{self.config["grid"]["nome"]};'
+        #Testa se é para sobrescrever
+        if self.config["grid"]["overwrite"]:
+            queries.append(drop_grid)
+
+        grid_query = f"""
+        CREATE TABLE {self.config["grid"]["schema"]}.{self.config["grid"]["nome"]} AS
+        with feicoes as (SELECT (ST_SquareGrid(0.5, ST_MakeEnvelope(
+        MIN(ST_XMin(geom)),
+        MIN(ST_YMin(geom)),
+        MAX(ST_XMax(geom)),
+        MAX(ST_YMax(geom)),
+        COALESCE(NULLIF(MAX(ST_SRID(geom)), 0), 4674)
+        ))).geom AS geom
+        FROM {self.config["grid"]["tabela_base"]} a {self.config["grid"]["where_clause"]})
+        select row_number() over () id ,geom from feicoes
+        where exists ( select true from {self.config["grid"]["tabela_base"]} a where st_intersects(a.geom, feicoes.geom));  
+        """        
+
+        queries.append(grid_query)
+        #Cria tabela no banco
+        try:
+            self.run_sql(queries)
+        except Exception as e:
+            self.logger.error(f"A tabela ja existe, se quiser reescrevê-la mude para overwite = True \n Erro: {e}") 
+
+
+
+
+    def create_input(self):
+        """
+        Cria a tabela input para o split com base no input.join. Este json conterá:
+        - Nome da tabela  no banco (os dados tem que estar no banco)
+        - SIGLA do dado (CAR, SIGEF, etc.)
+        - Identificador único da feição (a pensar)
+        - Hexadecimal conforme cartas da terra
+        - geometria
+        """
+
+        #Querie para dropar tabela pré existente
+        drop_querie = f'DROP TABLE IF EXISTS {self.config["input_algoritmo_split"]["schema"]}.input_{self.config["output"]["tabela_saida"]};'
+        #Querie para criar a tabela de input do modelo split schema do input + input_ + tabela_saida
+        create_querie = f'CREATE TABLE {self.config["input_algoritmo_split"]["schema"]}.input_{self.config["output"]["tabela_saida"]} AS '
+
+
+        #Cria as queries individuais
+        queries_individuais = []
+        for input in self.config["tabelas_raw"]:
+
+            q = f"""
+            SELECT {input["id"]} id, '{input["id_layer"]}' id_layer, {input["hexadecimal"]} hexadecimal, {input["geom"]} geom 
+            FROM {input["schema"]}.{input["nome_tabela"]} {input["where_clause"]} 
+            """
+            queries_individuais.append(q)
+
+
+       
+        #une todas as subqueries em uma só
+        if len(queries_individuais) == 1:
+            queries_individuais = queries_individuais[0]
         else:
-            self.logger.info(f"A flag skip_input_gen foi setada para True, skipping geração de input")
+            queries_individuais = " UNION ALL ".join(queries_individuais)
 
-        if not self.skip_grid_gen:
-            grid_gdf = self.create_grid()
-            if grid_gdf is not None:
-                self.export_grid_data(grid_gdf)
+        queries = create_querie + queries_individuais + ';'
+        
 
+        #Index na coluna geom
+        schema_in  = self.config['input_algoritmo_split']['schema']
+        table_in   = f"input_{self.config['output']['tabela_saida']}"
+        index_name = f"idx_{schema_in}_{table_in}_geom"
+
+        index = f'CREATE INDEX IF NOT EXISTS {index_name} ' +  f'ON {schema_in}.{table_in} ' + f'USING GIST (geom);'
+        
+      
+
+        #Se for para dar overwrite esse bloco será acionado
+        if self.config['input_algoritmo_split']['overwrite'] and self.check_table_exists(schema = self.config["output"]["schema"], tabela=self.config["output"]["tabela_saida"]):
+            queries = [drop_querie,queries,index]
         else:
-            self.logger.info(f"A flag skip_input_gen foi setada para True, skipping geração de grid")
-
-        self.logger.info("Processamento concluído.")
-
-
-
-# # Executa o loop em paralelo
-# if __name__ == "__main__":
-
-#     # Define o tempo de início
-#     start_time = time.time()
-
-#     # Usa partial para fixar os primeiros três argumentos
-#     dataprocessor = DataProcessor()
-#     dataprocessor.run()
-
-
+            queries = [queries, index]
     
-#     # Calcula o tempo decorrido
-#     elapsed_time = time.time() - start_time
-#     print(f'Demorou {elapsed_time:.2f} segundos para rodar tudo')
+        try:
+            self.run_sql(queries)
+            
+        except Exception as e:
+
+            logging.error(f"Deu pau {e}")
+            
+
+        
+
+
+
+
+
+#TESTES
+if __name__ == "__main__":
+
+    # Configuração do logger para prepare_inputs.log. 
+    logging.basicConfig(
+        filename='logs/prepare_inputs.log',
+        level=logging.INFO,
+        filemode = 'w',
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+    logger = logging.getLogger(__name__)
+
+    # Define o tempo de início
+    start_time = time.time()
+    # Usa partial para fixar os primeiros três argumentos
+    dataprocessor = DataProcessor()
+    dataprocessor.check_schema()
+    dataprocessor.create_grid() 
+    dataprocessor.create_input()
+   
+    # Calcula o tempo decorrido
+    elapsed_time = time.time() - start_time
+    logging.info(f'Demorou {elapsed_time:.2f} segundos para rodar tudo')

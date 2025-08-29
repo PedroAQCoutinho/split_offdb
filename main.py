@@ -1,6 +1,6 @@
 import logging
 from multiprocessing import Pool
-from split import Splitter, load_input
+from split import Splitter
 import time
 import json
 from prepare_inputs import DataProcessor
@@ -14,7 +14,7 @@ import subprocess
 from rtree import index
 from utils import merge_parquet_files
 from sqlalchemy import text, create_engine
-from uploader import upload_parquet, upload_full_folder
+
 
 
 
@@ -48,49 +48,48 @@ if __name__ == "__main__":
     with open("config.json", "r") as f:
         config = json.load(f)
 
-    # Skip prepare ?
-    skip_prepare_inputs = config["skip_prepare_inputs"]
 
-    dataprocessor = DataProcessor() #usar grid spacing default
-    engine=dataprocessor.engine
+    try:
+        dataprocessor = DataProcessor() #usar grid spacing default
+        engine=dataprocessor.engine
+        dataprocessor = DataProcessor()
+        dataprocessor.check_schema()
+        dataprocessor.create_grid() 
+        dataprocessor.create_input()
+        # Calcula o tempo decorrido
+        elapsed_time = time.time() - start_time
+        logging.info(f'Demorou {elapsed_time:.2f} segundos para rodar a preparação dos inputs')
+    except Exception as e:
+        logging.error(f"Erro na execução de dataprocessor {e}")
 
-    if not skip_prepare_inputs:
-        # Executa o DataProcessor com o grid_spacing atual e gera os inputs conforme as queries do config.json
-        dataprocessor.run()
-    else:
-        print('Skipping prepare_inputs.py')
 
     #Carregamento do grid na memória
     ##### Aqui pode ser um ponto de melhoria. Nao carregar na memoria ##### 
 
     #Lista de grids para iteração baseado no grid file gerado
-
-    grids = gpd.read_parquet(config["grid_file"])["id"].tolist()      
-
-
-
-    #Carregar o grid vetorial
-    grid_gdf = gpd.read_parquet(config["grid_file"])
-
-    
-
-    #Roda o código aqui !!!!!!!!!!
-    logger.info("Iniciando multiprocessing para grids")
-    #Intancia a classe
-    splitter = Splitter(config_path='config.json')
-
-    #Cria a tabela
-    splitter.create_table_postgresql(engine=engine)
-
-    #Roda em paralelo diversos grids, que utilizam recursos da instancia principal
-    splitter.run_parallel(grids=grids, grid_gdf=grid_gdf)
-
-    #Cria indices na tabela final no db
-    splitter.create_indices(engine=engine)
-
-    # Tempo total de processamento
-    elapsed_total = time.time() - start_time
-    logger.info(f"Tempo total de processamento: {elapsed_total:.2f} segundos")
+    rows = dataprocessor.run_sql(
+        sql=f"SELECT distinct id FROM {config['grid']['schema']}.{config['grid']['nome']}",
+        fetch=True
+    )[0]  # pega o primeiro elemento da lista externa
+    #lista de grids
+    grids = [r[0] for r in rows]  # extrai o campo id
+    logging.info(f"GRIDS: {grids}")
+    try:
+        #Roda o código aqui !!!!!!!!!!
+        logger.info("Iniciando multiprocessing para grids")
+        #Intancia a classe
+        splitter = Splitter(config_path='config.json')
+        #Cria a tabela
+        splitter.create_table(engine=engine)
+        #Cria indices na tabela final no db
+        splitter.create_indices(engine=engine)
+        #Roda em paralelo diversos grids, que utilizam recursos da instancia principal
+        splitter.run_parallel(grids=grids)
+        # Tempo total de processamento
+        elapsed_total = time.time() - start_time
+        logger.info(f"Tempo total de processamento: {elapsed_total:.2f} segundos")
+    except Exception as e:
+        logging.error(f"Erro {e}")
 
 
 
