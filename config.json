@@ -1,28 +1,28 @@
 {  "config":{
-        "num_processes": 4
+        "num_processes": 10,
+        "value_columns": ["MUN","BIOMA"]
     },
     "tabela_visao_fundiaria": {
-      "has_join":"True",
-      "path_arquivo_csv":"/home/pedro/Documents/GIT_WORKSPACE/prod-Malha-Fundiaria/dados/tabela_indice.csv",
-      "nome_coluna_visao_fundiaria":["categorias_fundiarias_v2025"],
+      "has_join":"False",
+      "path_arquivo_csv":"inputs/tabela.csv",
+      "nome_coluna_visao_fundiaria":["label"],
       "nome_coluna_hexadecimal":"hexadecimal"
 
     },
     "output": {
-        "schema":"split_output",
-        "tabela_saida":"split_cdt_v2025"
+        "schema":"os05_br319",
+        "tabela_saida":"br_319"
     },
     "grid":{
-        "schema":"split_input",
-        "nome": "grid_cdt_v2025",
-        "tabela_base": "ibge.pa_br_municipios_ibge_2022",
-        "where_clause" : "where cd_mun = 5107065",
+        "schema":"os05_br319",
+        "tabela_base": "ibge.pa_br_uf_ibge_2022",
+        "where_clause" : "where sigla_uf in ('AM','RO')",
         "spacing": 0.5,
         "overwrite":"True"
     },       
     "input_algoritmo_split": {
         "overwrite":"True",
-        "schema":"split_input"
+        "schema":"os05_br319"
     },
     "tabelas_raw": [
     {
@@ -31,189 +31,59 @@
       "where_clause": "",
       "id":"cd_mun::int",
       "id_layer": "MUN",
-      "hexadecimal": 100000,
-      "geom":"st_force2d(geom)"     
-    },
-    {
-      "schema": "sfb",
-      "nome_tabela": "pa_br_cnfp_sfb_2022",
-      "where_clause": "WHERE classe ILIKE ('%militar%')",
-      "id":"gid",
-      "id_layer": "AM",
-      "hexadecimal": 1 ,
-      "geom":"st_force2d(geom)"
-      
-    },
-    {
-      "schema": "incra",
-      "nome_tabela": "pa_br_assentamentos_incra_2025",
-      "where_clause": " where primeira_palavra  in ('PRB','PA','PAC','PC','PCA','PIC','PE')",
-      "id":"gid",
-      "id_layer": "ASSA",
-      "hexadecimal": 2 ,
-      "geom":"st_force2d(geom)"
-      
-    },
-    {
-      "schema": "incra",
-      "nome_tabela": "pa_br_sigef_publico_incra_2025",
-      "where_clause": "",
-      "id":"gid",
-      "id_layer": "GP",
-      "hexadecimal": 6 ,
-      "geom":"st_force2d(geom)"
-      
-    },
-    {
-      "schema": "incra",
-      "nome_tabela": "pa_br_sigef_privado_incra_2025",
-      "where_clause": "",
-      "id":"gid",
-      "id_layer": "IRP",
-      "hexadecimal": 10 ,
-      "geom":"st_force2d(geom)"
-      
-    },
-    {
-      "schema": "incra",
-      "nome_tabela": "pa_br_snci_privado_incra_2025",
-      "where_clause": "",
-      "id":"gid",
-      "id_layer": "IRP",
-      "hexadecimal": 10 ,
-      "geom":"st_force2d(geom)"
-      
-    },
-    {
-      "schema": "incra",
-      "nome_tabela": "pa_br_assentamentos_incra_2025",
-      "where_clause": "where primeira_palavra in ('PAQ', 'RTRQ')",
-      "id":"gid",
-      "id_layer": "TQD",
-      "hexadecimal": 20 ,
-      "geom":"st_force2d(geom)"
-      
-    },
-    {
-      "schema": "funai",
-      "nome_tabela": "pa_br_terrasindigenas_funai_2025",
-      "where_clause": "where fase_ti not in ('Declarada' ,'Em Estudo', 'Delimitada', 'Encaminhada RI')",
-      "id":"gid",
-      "id_layer": "TIH",
-      "hexadecimal": 60 ,
-      "geom":"st_force2d(geom)"
-      
-    },
-    {
-      "schema": "funai",
-      "nome_tabela": "pa_br_terrasindigenas_funai_2025",
-      "where_clause": "where fase_ti in ('Declarada' ,'Em Estudo', 'Delimitada', 'Encaminhada RI')",
-      "id":"gid",
-      "id_layer": "TINH",
-      "hexadecimal": 100 ,
-      "geom":"st_force2d(geom)"
-      
-    },
-    {
-      "schema": "mma",
-      "nome_tabela": "pa_br_ucs_mma_2025",
-      "where_clause": "where categoria in ('Reserva Extrativista', 'Reserva de Desenvolvimento Sustentável', 'Floresta')",
-      "id":"gid",
-      "id_layer": "UCUS",
-      "hexadecimal": 200 ,
-      "geom":"st_force2d(geom)"
-      
-    },
-    {
-      "schema": "mma",
-      "nome_tabela": "pa_br_ucs_mma_2025",
-      "where_clause": "where categoria in ( 'Área de Proteção Ambiental', 'Área de Relevante Interesse Ecológico')",
-      "id":"gid",
-      "id_layer": "UCUSB",
-      "hexadecimal": 600 ,
-      "geom":"st_force2d(geom)"
-      
-    },
-    {
-      "schema": "mma",
-      "nome_tabela": "pa_br_ucs_mma_2025",
-      "where_clause": "where categoria not in ('Reserva Extrativista', 'Reserva de Desenvolvimento Sustentável', 'Floresta', 'Área de Proteção Ambiental', 'Área de Relevante Interesse Ecológico')",
-      "id":"gid",
-      "id_layer": "UCPI",
-      "hexadecimal": 1000 ,
-      "geom":"st_force2d(geom)"
-      
-    },
-    {
-      "schema": "mma",
-      "nome_tabela": "pa_br_ucs_mma_2025",
-      "where_clause": "where categoria not in ('Reserva Extrativista', 'Reserva de Desenvolvimento Sustentável', 'Floresta', 'Área de Proteção Ambiental', 'Área de Relevante Interesse Ecológico')",
-      "id":"gid",
-      "id_layer": "UCPI",
-      "hexadecimal": 1000 ,
-      "geom":"st_force2d(geom)"
-      
-    },
-    {
-      "schema": "car",
-      "nome_tabela": "car_18022025",
-      "where_clause": "",
-      "id":"split_part(gml_id, '.', 2)::int",
-      "id_layer": "CAR",
-      "hexadecimal": 2000 ,
-      "geom":"st_force2d(geom)"
-      
-    },
-    {
-      "schema": "ana",
-      "nome_tabela": "pa_br_massasdagua_ana_2019",
-      "where_clause": "",
-      "id":"gid",
-      "id_layer": "MD",
-      "hexadecimal": 6000 ,
-      "geom":"st_force2d(geom)"
-      
-    },
-    {
+      "hexadecimal": 10000,
+      "geom":"geom"     
+    },{
       "schema": "ibge",
-      "nome_tabela": "pa_br_areas_urbanizadas_ibge_2019",
+      "nome_tabela": "pa_br_biomas_subdivide_ibge_2022",
       "where_clause": "",
-      "id":"gid",
-      "id_layer": "AU",
-      "hexadecimal": 10000 ,
-      "geom":"st_force2d(geom)"
+      "id":"cd_bioma::int",
+      "id_layer": "BIOMA",
+      "hexadecimal": 0,
+      "geom":"geom"     
+    },
+    {
+      "schema": "os05_br319",
+      "nome_tabela": "area_estudo_humaita",
+      "where_clause": "",
+      "id":"id::int",
+      "id_layer": "HUMAITA",
+      "hexadecimal": 2 ,
+      "geom":"geom"
       
     },
     {
-      "schema": "incra",
-      "nome_tabela": "pa_br_assentamentos_incra_2025",
-      "where_clause": "where primeira_palavra in ('PAF','PDS', 'PAE')",
-      "id":"gid",
-      "id_layer": "ASSB",
-      "hexadecimal": 20000 ,
-      "geom":"st_force2d(geom)"
+      "schema": "os05_br319",
+      "nome_tabela": "area_interesse_icmbio ",
+      "where_clause": "",
+      "id":"id::int",
+      "id_layer": "ICMBIO",
+      "hexadecimal": 6 ,
+      "geom":"geom"
       
     },
     {
-      "schema": "incra",
-      "nome_tabela": "pa_br_territoriosquilombolas_incra_2025",
-      "where_clause": "WHERE fase IN ('Contestação','EDITAL','RTID','RTID - CONTRADITORIO')",
-      "id":"gid",
-      "id_layer": "TQND",
-      "hexadecimal": 60000 ,
-      "geom":"st_force2d(geom)"
+      "schema": "os05_br319",
+      "nome_tabela": "buffer_split ",
+      "where_clause": "",
+      "id":"gid::int",
+      "id_layer": "BUFFER",
+      "hexadecimal": 10 ,
+      "geom":"geom"
       
     },
     {
-      "schema": "sfb",
-      "nome_tabela": "pa_br_cnfp_sfb_2022",
-      "where_clause": "where tipo = 'TIPO B'",
-      "id":"gid",
-      "id_layer": "FPND",
-      "hexadecimal": 600000 ,
-      "geom":"st_force2d(geom)"
+      "schema": "os05_br319",
+      "nome_tabela": "car_classificadov3 ",
+      "where_clause": "",
+      "id":"id::int",
+      "id_layer": "CAR",
+      "hexadecimal": 20 ,
+      "geom":"geom"
       
     }
+
   ]
 }
+
 

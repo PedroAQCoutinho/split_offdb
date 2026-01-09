@@ -18,9 +18,15 @@ from sqlalchemy import text, create_engine
 
 
 
+# Carrega a configuração
+with open("config.json", "r") as f:
+    config = json.load(f)
+
+logfile = f"logs/main_{config['output']['tabela_saida']}.log"
+
 # Configuração do logger para main.log
 logging.basicConfig(
-    filename='logs/main.log',
+    filename=logfile,
     level=logging.INFO,
     filemode = 'w',
     format='%(asctime)s - %(levelname)s - %(message)s'
@@ -44,10 +50,6 @@ if __name__ == "__main__":
     start_time = time.time()
     logger.info(f"Iniciando processamento geral, PID : {os.getpid()}")
 
-    # Carrega a configuração
-    with open("config.json", "r") as f:
-        config = json.load(f)
-
 
     try:
         dataprocessor = DataProcessor() #usar grid spacing default
@@ -68,7 +70,7 @@ if __name__ == "__main__":
 
     #Lista de grids para iteração baseado no grid file gerado
     rows = dataprocessor.run_sql(
-        sql=f"SELECT distinct id FROM {config['grid']['schema']}.{config['grid']['nome']}",
+        sql=f"SELECT distinct id FROM {config['grid']['schema']}.{config['output']['tabela_saida']}_grid",
         fetch=True
     )[0]  # pega o primeiro elemento da lista externa
     #lista de grids
@@ -90,6 +92,7 @@ if __name__ == "__main__":
         logger.info(f"Tempo total de processamento: {elapsed_total:.2f} segundos")
     except Exception as e:
         logging.error(f"Erro {e}")
+
 
 
 

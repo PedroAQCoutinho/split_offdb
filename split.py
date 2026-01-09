@@ -45,15 +45,21 @@ class Splitter():
         
 
         # Acessando as variáveis carregadas
-        #GRID
-        self.grid_schema = config['grid']['schema']
-        self.grid_nome = config['grid']['nome']
         #OUTPUT 
         self.output_schema = config['output']["schema"]
         self.output_nome = config['output']["tabela_saida"]
+     
+        #GRID
+        self.grid_schema = config['grid']['schema']
+        self.grid_nome = self.output_nome + '_grid'
+
         #INPUT
         self.input_schema = config['input_algoritmo_split']['schema']
-        self.input_name = "input_" + self.output_nome
+        self.input_name = self.output_nome + '_input'
+        
+        #OUTPUT     
+        self.output_nome = self.output_nome + '_split'
+
         #VISAO FUNDIARIA
         self.has_join = config['tabela_visao_fundiaria']['has_join']
         self.campos = config['tabela_visao_fundiaria']['nome_coluna_visao_fundiaria']
@@ -61,6 +67,8 @@ class Splitter():
         self.path_visao_fundiaria = config['tabela_visao_fundiaria']['path_arquivo_csv']
 
         self.num_processes = config["config"]["num_processes"]
+        self.value_columns = config["config"]["value_columns"]
+        
         
         #schema + input_ + tabela_saida = nome da tabela de entrada
         self.split_table_name = f'{config["output"]["schema"]}.input_{config["output"]["tabela_saida"]}'
@@ -123,7 +131,7 @@ class Splitter():
         
         # Criar a query SQL para filtrar na tabela inputs apenas os registros que estao no bounding box do grid
         query = f"""
-        select a.id, a.id_layer, a.hexadecimal, a.geom
+        select a.id, a.id_layer, a.hexadecimal, st_force2d(a.geom) geom
         from {self.input_schema}.{self.input_name} a
         where a.geom && (
             select st_envelope(geom)
@@ -172,7 +180,9 @@ class Splitter():
             #Temos que forçar que todos os poligonos de entrada devem formar lines rings. Caso isso não seja possível a geometria deve ser descartada pois vai dar BO
             for index, row in self.gdf_input_intersection.iterrows():
                 #Seleciona geometria do dado
-                geom=row.geom           
+                geom=row.geom 
+                if geom is None or geom.is_empty:
+                    continue          
                 #Nova versão, aqui, para multipolygons ele explode a feicao e captura todos os subpolygons. É importante pois se não seriam perdidos fragmentos do multipolygon
                 #Extrair os poligonos de multipoligons ou pega a geometria in natura caso seja diferente de multipolygon
                 polys = list(geom.geoms) if isinstance(geom, MultiPolygon) else [geom]
@@ -382,13 +392,17 @@ class Splitter():
                 'id_layer_unico' : 'text[]',
                 'id_feature'     : 'integer[]',
                 'hexadecimal'    : 'bigint',
-                'cd_mun'         : 'integer',
-                'cd_uf'          : 'integer',
                 'n_car'          : 'integer',
                 'area_ha'        : 'numeric(20,4)',
                 # booleanas entram na sequencia
                 # geometry entra por último
             }
+
+        for col in self.value_columns:
+            bc[f"cd_{col.lower()}"] = "integer"
+            if col == 'MUN':
+                bc[f"cd_uf"] = "integer"
+
 
         #Adiciona as colunas booleanas
         for x in self.boleanas:
@@ -501,25 +515,38 @@ class Splitter():
             # 2. Drop onde é id_layer = ['GRID'] através da condiução hexadecimal = 0. O objetivo é descartar geometrias que não tem nenhuma informação
             self.gdf_broken_glass=self.gdf_broken_glass[self.gdf_broken_glass['hexadecimal'] != 0]      
 
-            # 3. Adiciona colunas cd_mun e cd_uf
-            #Define a mask, que é onde existe 'MUN' na array
-            mask = self.gdf_broken_glass['id_layer'].apply(lambda xs: 'MUN' in xs)
+            
+            # Cria colunas com id_feature para os id_layers selecionados
+    
+            for col in self.value_columns:
+            #Adiciona colunas de self.value_columns + cd_uf quando houver 'MUN'
+            #Define a mask, que é quando existe a col na array, para nao dar warning
+                
+                coluna=f"cd_{col.lower()}"
+                
+                mask = self.gdf_broken_glass['id_layer'].apply(lambda xs: col in xs)                
+                
+                self.gdf_broken_glass[coluna] = pd.Series([pd.NA] * len(self.gdf_broken_glass), dtype="Int64")
+                
+                if col == 'MUN':
+                    self.gdf_broken_glass['cd_uf'] = pd.Series([pd.NA] * len(self.gdf_broken_glass), dtype="Int64")
+                
+                self.gdf_broken_glass.loc[mask, coluna] = self.gdf_broken_glass.loc[mask].apply(
+                    lambda row: int(row['id_feature'][next(i for i, v in enumerate(row['id_layer']) if str(v).upper() == col)]),
+                    axis=1
+                ).pipe(pd.to_numeric, errors='coerce').astype('Int64')
 
-            self.gdf_broken_glass['cd_mun']=pd.NA
-            self.gdf_broken_glass['cd_uf']=pd.NA
+            
+                if col == 'MUN':
+                    #cd_uf apenas onde há 'MUN'. Isso evita warnings desnecessários.
+                    self.gdf_broken_glass.loc[mask,'cd_uf'] = (
+                        self.gdf_broken_glass.loc[mask, coluna]          
+                        .astype(str).str[:2]
+                        .astype('int')
+                    ).where(mask, other=pd.NA).pipe(pd.to_numeric, errors='coerce').astype('Int64')
 
-            #cd_mun apenas onde há 'MUN'. Isso evita warnings desnecessários.
-            self.gdf_broken_glass.loc[mask, 'cd_mun'] = self.gdf_broken_glass.loc[mask].apply(
-                lambda row: int(row['id_feature'][next(i for i, v in enumerate(row['id_layer']) if str(v).upper() == 'MUN')]),
-                axis=1
-            ).astype('int')
 
-            #cd_uf apenas onde há 'MUN'. Isso evita warnings desnecessários.
-            self.gdf_broken_glass.loc[mask,'cd_uf'] = (
-                self.gdf_broken_glass.loc[mask, 'cd_mun']          
-                .astype(str).str[:2]
-                .astype('int')
-            ).where(mask, other=pd.NA).astype('int')
+                    
 
             # 4. Conta número de CARs na feição
             self.gdf_broken_glass['n_car'] = np.array([x.count('CAR') for x in self.gdf_broken_glass['id_layer']])
@@ -558,7 +585,7 @@ class Splitter():
 
 
         except Exception as e:
-            logging.error(f"Erro observado {e}")
+            logging.error(f"Erro format {e}")
             raise
 
 

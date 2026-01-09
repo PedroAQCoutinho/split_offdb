@@ -1,0 +1,261 @@
+{  "config":{
+        "num_processes": 10,
+        "value_columns": ["MUN","BIOMA","APTIDAO"]
+    },
+    "tabela_visao_fundiaria": {
+      "has_join":"False",
+      "path_arquivo_csv":"inputs/tabela.csv",
+      "nome_coluna_visao_fundiaria":["label"],
+      "nome_coluna_hexadecimal":"hexadecimal"
+
+    },
+    "output": {
+        "schema":"proj_uk_embassy",
+        "tabela_saida":"uk_embassy"
+    },
+    "grid":{
+        "schema":"proj_uk_embassy",
+        "tabela_base": "ibge.pa_br_municipios_ibge_2022",
+        "where_clause" : "",
+        "spacing": 0.5,
+        "overwrite":"True"
+    },       
+    "input_algoritmo_split": {
+        "overwrite":"True",
+        "schema":"proj_uk_embassy"
+    },
+    "tabelas_raw": [
+    {
+      "schema": "ibge",
+      "nome_tabela": "pa_br_municipios_subdivide_ibge_2022  ",
+      "where_clause": "",
+      "id":"cd_mun::int",
+      "id_layer": "MUN",
+      "hexadecimal": 1,
+      "geom":"geom"     
+    },
+    {
+      "schema": "ibge",
+      "nome_tabela": "pa_br_biomas_subdivide_ibge_2022",
+      "where_clause": "",
+      "id":"cd_bioma",
+      "id_layer": "BIOMA",
+      "hexadecimal": 2 ,
+      "geom":"geom"
+      
+    },
+    {
+      "schema": "avaliacao_impacto",
+      "nome_tabela": "tis",
+      "where_clause": "where id_layer = 'TIS'",
+      "id":"id",
+      "id_layer": "PERIMETRO",
+      "hexadecimal": 6 ,
+      "geom":"geom"
+      
+    },
+    {
+      "schema": "avaliacao_impacto",
+      "nome_tabela": "subset_car ",
+      "where_clause": "where layer_sobreposicao = 'TIS' and tipo_imovel = 'IRU' and case when mfiscal <= 4 and area_sobreposicao > 0.05*area then true when mfiscal > 4 and mfiscal <= 15 and area_sobreposicao > 0.03*area then true when mfiscal > 15 and area_sobreposicao > 0.01*area then true else false end",
+      "id":"gid",
+      "id_layer": "CAR_PERIMETRO",
+      "hexadecimal": 10 ,
+      "geom":"geom"
+      
+    },
+    {
+      "schema": "avaliacao_impacto",
+      "nome_tabela": "subset_sigef ",
+      "where_clause": "where layer_sobreposicao = 'TIS' and case when mfiscal <= 4 and area_sobreposicao > 0.05*area then true when mfiscal > 4 and mfiscal <= 15 and area_sobreposicao > 0.03*area then true when mfiscal > 15 and area_sobreposicao > 0.01*area then true else false end",
+      "id":"gid",
+      "id_layer": "SIGEF_PERIMETRO",
+      "hexadecimal": 20 ,
+      "geom":"geom"
+      
+    },
+    {
+      "schema": "avaliacao_impacto",
+      "nome_tabela": "subset_snci ",
+      "where_clause": "where layer_sobreposicao = 'TIS' and case when mfiscal <= 4 and area_sobreposicao > 0.05*area then true when mfiscal > 4 and mfiscal <= 15 and area_sobreposicao > 0.03*area then true when mfiscal > 15 and area_sobreposicao > 0.01*area then true else false end",
+      "id":"gid",
+      "id_layer": "SIGEF_PERIMETRO",
+      "hexadecimal": 20 ,
+      "geom":"geom"
+      
+    },
+    {
+      "schema": "avaliacao_impacto",
+      "nome_tabela": "buffer_ti_estudo ",
+      "where_clause": "where id_layer = 'BUFFER_TI_ESTUDO' AND gid not in (30, 35, 50, 51, 65, 112, 113, 115, 116, 127, 129, 131, 135, 137, 141, 142, 143, 146)",
+      "id":"gid",
+      "id_layer": "BUFFER_1",
+      "hexadecimal": 60 ,
+      "geom":"st_buffer(st_centroid(geom::geography), raio)::geometry"
+      
+    },
+    {
+      "schema": "avaliacao_impacto",
+      "nome_tabela": "buffer_ti_estudo ",
+      "where_clause": "where id_layer = 'BUFFER_TI_ESTUDO' AND gid not in (30, 35, 50, 51, 65, 112, 113, 115, 116, 127, 129, 131, 135, 137, 141, 142, 143, 146)",
+      "id":"gid",
+      "id_layer": "BUFFER_2",
+      "hexadecimal": 100 ,
+      "geom":"st_buffer(st_centroid(geom::geography), raio*0.75)::geometry"
+      
+    },
+    {
+      "schema": "avaliacao_impacto",
+      "nome_tabela": "buffer_ti_estudo",
+      "where_clause": "where id_layer = 'BUFFER_TI_ESTUDO' AND gid not in (30, 35, 50, 51, 65, 112, 113, 115, 116, 127, 129, 131, 135, 137, 141, 142, 143, 146)",
+      "id":"gid",
+      "id_layer": "BUFFER_3",
+      "hexadecimal": 200 ,
+      "geom":"st_buffer(st_centroid(geom::geography), raio*0.5)::geometry"
+      
+    },
+    {
+      "schema": "avaliacao_impacto",
+      "nome_tabela": "buffer_ti_estudo",
+      "where_clause": "where id_layer = 'BUFFER_TI_ESTUDO' AND gid not in (30, 35, 50, 51, 65, 112, 113, 115, 116, 127, 129, 131, 135, 137, 141, 142, 143, 146)",
+      "id":"gid",
+      "id_layer": "BUFFER_4",
+      "hexadecimal": 200 ,
+      "geom":"st_buffer(st_centroid(geom::geography), raio*0.25)::geometry"
+      
+    },
+    {
+      "schema": "avaliacao_impacto",
+      "nome_tabela": "subset_car a",
+      "where_clause": "inner join avaliacao_impacto.buffer_1 b on st_intersects(a.geom, b.geom) and tipo_imovel = 'IRU' WHERE case when mfiscal <= 4 and area_sobreposicao > 0.05*area then true when mfiscal > 4 and mfiscal <= 15 and area_sobreposicao > 0.03*area then true when mfiscal > 15 and area_sobreposicao > 0.01*area then true else false end ",
+      "id":"id",
+      "id_layer": "CAR_BUFFER_1",
+      "hexadecimal": 600 ,
+      "geom":"a.geom"
+      
+    },
+    {
+      "schema": "avaliacao_impacto",
+      "nome_tabela": "subset_car a",
+      "where_clause": "inner join avaliacao_impacto.buffer_2 b on st_intersects(a.geom, b.geom) and tipo_imovel = 'IRU'  WHERE case when mfiscal <= 4 and area_sobreposicao > 0.05*area then true when mfiscal > 4 and mfiscal <= 15 and area_sobreposicao > 0.03*area then true when mfiscal > 15 and area_sobreposicao > 0.01*area then true else false end ",
+      "id":"id",
+      "id_layer": "CAR_BUFFER_2",
+      "hexadecimal": 1000 ,
+      "geom":"a.geom"
+      
+    },
+    {
+      "schema": "avaliacao_impacto",
+      "nome_tabela": "subset_car a",
+      "where_clause": "inner join avaliacao_impacto.buffer_3 b on st_intersects(a.geom, b.geom) and tipo_imovel = 'IRU'  WHERE case when mfiscal <= 4 and area_sobreposicao > 0.05*area then true when mfiscal > 4 and mfiscal <= 15 and area_sobreposicao > 0.03*area then true when mfiscal > 15 and area_sobreposicao > 0.01*area then true else false end ",
+      "id":"id",
+      "id_layer": "CAR_BUFFER_3",
+      "hexadecimal": 2000 ,
+      "geom":"a.geom"
+      
+    },
+    {
+      "schema": "avaliacao_impacto",
+      "nome_tabela": "subset_car a",
+      "where_clause": "inner join avaliacao_impacto.buffer_4 b on st_intersects(a.geom, b.geom) and tipo_imovel = 'IRU'  WHERE case when mfiscal <= 4 and area_sobreposicao > 0.05*area then true when mfiscal > 4 and mfiscal <= 15 and area_sobreposicao > 0.03*area then true when mfiscal > 15 and area_sobreposicao > 0.01*area then true else false end ",
+      "id":"id",
+      "id_layer": "CAR_BUFFER_4",
+      "hexadecimal": 6000 ,
+      "geom":"a.geom"
+      
+    },
+    {
+      "schema": "avaliacao_impacto",
+      "nome_tabela": "subset_sigef a",
+      "where_clause": "inner join avaliacao_impacto.buffer_1 b on st_intersects(a.geom, b.geom) and tipo_imovel = 'IRU'  WHERE case when mfiscal <= 4 and area_sobreposicao > 0.05*area then true when mfiscal > 4 and mfiscal <= 15 and area_sobreposicao > 0.03*area then true when mfiscal > 15 and area_sobreposicao > 0.01*area then true else false end ",
+      "id":"id",
+      "id_layer": "SIGEF_BUFFER_1",
+      "hexadecimal": 10000 ,
+      "geom":"a.geom"
+      
+    },
+    {
+      "schema": "avaliacao_impacto",
+      "nome_tabela": "subset_snci a",
+      "where_clause": "inner join avaliacao_impacto.buffer_1 b on st_intersects(a.geom, b.geom) and tipo_imovel = 'IRU'  WHERE case when mfiscal <= 4 and area_sobreposicao > 0.05*area then true when mfiscal > 4 and mfiscal <= 15 and area_sobreposicao > 0.03*area then true when mfiscal > 15 and area_sobreposicao > 0.01*area then true else false end ",
+      "id":"id",
+      "id_layer": "SIGEF_BUFFER_1",
+      "hexadecimal": 10000 ,
+      "geom":"a.geom"
+      
+    },
+    {
+      "schema": "avaliacao_impacto",
+      "nome_tabela": "subset_sigef a",
+      "where_clause": "inner join avaliacao_impacto.buffer_2 b on st_intersects(a.geom, b.geom) and tipo_imovel = 'IRU'  WHERE case when mfiscal <= 4 and area_sobreposicao > 0.05*area then true when mfiscal > 4 and mfiscal <= 15 and area_sobreposicao > 0.03*area then true when mfiscal > 15 and area_sobreposicao > 0.01*area then true else false end ",
+      "id":"id",
+      "id_layer": "SIGEF_BUFFER_2",
+      "hexadecimal": 20000 ,
+      "geom":"a.geom"
+      
+    },
+    {
+      "schema": "avaliacao_impacto",
+      "nome_tabela": "subset_snci a",
+      "where_clause": "inner join avaliacao_impacto.buffer_2 b on st_intersects(a.geom, b.geom) and tipo_imovel = 'IRU'  WHERE case when mfiscal <= 4 and area_sobreposicao > 0.05*area then true when mfiscal > 4 and mfiscal <= 15 and area_sobreposicao > 0.03*area then true when mfiscal > 15 and area_sobreposicao > 0.01*area then true else false end ",
+      "id":"id",
+      "id_layer": "SIGEF_BUFFER_2",
+      "hexadecimal": 20000 ,
+      "geom":"a.geom"
+      
+    },
+    {
+      "schema": "avaliacao_impacto",
+      "nome_tabela": "subset_sigef a",
+      "where_clause": "inner join avaliacao_impacto.buffer_3 b on st_intersects(a.geom, b.geom) and tipo_imovel = 'IRU'  WHERE case when mfiscal <= 4 and area_sobreposicao > 0.05*area then true when mfiscal > 4 and mfiscal <= 15 and area_sobreposicao > 0.03*area then true when mfiscal > 15 and area_sobreposicao > 0.01*area then true else false end ",
+      "id":"id",
+      "id_layer": "SIGEF_BUFFER_3",
+      "hexadecimal": 60000 ,
+      "geom":"a.geom"
+      
+    },
+    {
+      "schema": "avaliacao_impacto",
+      "nome_tabela": "subset_snci a",
+      "where_clause": "inner join avaliacao_impacto.buffer_3 b on st_intersects(a.geom, b.geom) and tipo_imovel = 'IRU'  WHERE case when mfiscal <= 4 and area_sobreposicao > 0.05*area then true when mfiscal > 4 and mfiscal <= 15 and area_sobreposicao > 0.03*area then true when mfiscal > 15 and area_sobreposicao > 0.01*area then true else false end ",
+      "id":"id",
+      "id_layer": "SIGEF_BUFFER_3",
+      "hexadecimal": 60000 ,
+      "geom":"a.geom"
+      
+    },
+    {
+      "schema": "avaliacao_impacto",
+      "nome_tabela": "subset_sigef a",
+      "where_clause": "inner join avaliacao_impacto.buffer_4 b on st_intersects(a.geom, b.geom) and tipo_imovel = 'IRU'  WHERE case when mfiscal <= 4 and area_sobreposicao > 0.05*area then true when mfiscal > 4 and mfiscal <= 15 and area_sobreposicao > 0.03*area then true when mfiscal > 15 and area_sobreposicao > 0.01*area then true else false end ",
+      "id":"id",
+      "id_layer": "SIGEF_BUFFER_4",
+      "hexadecimal": 100000 ,
+      "geom":"a.geom"
+      
+    },
+    {
+      "schema": "avaliacao_impacto",
+      "nome_tabela": "subset_snci a",
+      "where_clause": "inner join avaliacao_impacto.buffer_4 b on st_intersects(a.geom, b.geom) and tipo_imovel = 'IRU'  WHERE case when mfiscal <= 4 and area_sobreposicao > 0.05*area then true when mfiscal > 4 and mfiscal <= 15 and area_sobreposicao > 0.03*area then true when mfiscal > 15 and area_sobreposicao > 0.01*area then true else false end ",
+      "id":"id",
+      "id_layer": "SIGEF_BUFFER_4",
+      "hexadecimal": 100000 ,
+      "geom":"a.geom"
+      
+    },
+    {
+      "schema": "ibge",
+      "nome_tabela": "pa_br_potencialidadeagricola_ibge_2022",
+      "where_clause": "",
+      "id":"potenc_id",
+      "id_layer": "APTIDAO",
+      "hexadecimal": 200000 ,
+      "geom":"geom"
+      
+    }
+
+  ]
+}
+
+

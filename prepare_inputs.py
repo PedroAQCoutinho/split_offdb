@@ -112,18 +112,19 @@ class DataProcessor:
         
         Requer PostGIS >= 3 (ST_SquareGrid).
         """
-        
+        grid_nome = f"{self.config["grid"]["schema"]}.{self.config["output"]["tabela_saida"]}"
+        grid_nome = grid_nome + '_grid'
         
         # Construir a query de grid usando as cláusulas do config.json
         queries = []
 
-        drop_grid = f'DROP TABLE IF EXISTS {self.config["grid"]["schema"]}.{self.config["grid"]["nome"]};'
+        drop_grid = f'DROP TABLE IF EXISTS {grid_nome};'
         #Testa se é para sobrescrever
         if self.config["grid"]["overwrite"]:
             queries.append(drop_grid)
 
         grid_query = f"""
-        CREATE TABLE {self.config["grid"]["schema"]}.{self.config["grid"]["nome"]} AS
+        CREATE TABLE {grid_nome} AS
         with feicoes as (SELECT (ST_SquareGrid(0.5, ST_MakeEnvelope(
         MIN(ST_XMin(geom)),
         MIN(ST_YMin(geom)),
@@ -155,11 +156,19 @@ class DataProcessor:
         - Hexadecimal conforme cartas da terra
         - geometria
         """
+    
+
+        #Index na coluna geom
+        schema_in  = self.config['input_algoritmo_split']['schema']
+        table_in   = self.config["output"]["tabela_saida"] + '_input'
+        index_name = f"idx_{schema_in}_{table_in}_geom"
+
+
 
         #Querie para dropar tabela pré existente
-        drop_querie = f'DROP TABLE IF EXISTS {self.config["input_algoritmo_split"]["schema"]}.input_{self.config["output"]["tabela_saida"]};'
+        drop_querie = f'DROP TABLE IF EXISTS {schema_in}.{table_in};'
         #Querie para criar a tabela de input do modelo split schema do input + input_ + tabela_saida
-        create_querie = f'CREATE TABLE {self.config["input_algoritmo_split"]["schema"]}.input_{self.config["output"]["tabela_saida"]} AS '
+        create_querie = f'CREATE TABLE {schema_in}.{table_in} AS '
 
 
         #Cria as queries individuais
@@ -179,24 +188,25 @@ class DataProcessor:
             queries_individuais = queries_individuais[0]
         else:
             queries_individuais = " UNION ALL ".join(queries_individuais)
-
-        queries = create_querie + queries_individuais + ';'
+        
         
 
-        #Index na coluna geom
-        schema_in  = self.config['input_algoritmo_split']['schema']
-        table_in   = f"input_{self.config['output']['tabela_saida']}"
-        index_name = f"idx_{schema_in}_{table_in}_geom"
+        queries = create_querie + queries_individuais + ';'
+
+
+        logging.info(queries_individuais)
+        
 
         index = f'CREATE INDEX IF NOT EXISTS {index_name} ' +  f'ON {schema_in}.{table_in} ' + f'USING GIST (geom);'
         
       
 
         #Se for para dar overwrite esse bloco será acionado
-        if self.config['input_algoritmo_split']['overwrite'] and self.check_table_exists(schema = self.config["output"]["schema"], tabela=self.config["output"]["tabela_saida"]):
+        if self.config['input_algoritmo_split']['overwrite'] and self.check_table_exists(schema = schema_in, tabela=table_in):
             queries = [drop_querie,queries,index]
         else:
-            queries = [queries, index]
+            queries = []
+            logging.info('Nenhuma querie foi adicionada pois overwrite = False')
     
         try:
             self.run_sql(queries)

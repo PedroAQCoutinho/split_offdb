@@ -11,3 +11,6 @@ finais/
 log
 nohup.out
 inputs_brasil/
+_split/
+*.gpkg
+*.zip
